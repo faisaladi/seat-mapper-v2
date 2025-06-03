@@ -1,0 +1,5 @@
+# Example: Ignore specific files or directories
+src/app/seat-map-editor.tsx
+node_modules/
+build/
+public/

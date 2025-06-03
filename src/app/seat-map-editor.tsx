@@ -1,22 +1,100 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable react-hooks/exhaustive-deps */
 'use client';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Upload, Copy, RotateCcw, Save, Edit2, Check, X } from 'lucide-react';
 
-const SeatMapEditor = () => {
-  const [seatData, setSeatData] = useState(null);
-  const [selectedSeats, setSelectedSeats] = useState(new Set());
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState(null);
-  const [dragEnd, setDragEnd] = useState(null);
-  const [currentStatus, setCurrentStatus] = useState('available');
-  const [editingCategory, setEditingCategory] = useState(null);
-  const [editCategoryName, setEditCategoryName] = useState('');
-  const [showOutput, setShowOutput] = useState(false);
-  const canvasRef = useRef(null);
-  const fileInputRef = useRef(null);
+// Type definitions
+interface Position {
+  x: number;
+  y: number;
+}
+
+interface Size {
+  width: number;
+  height: number;
+}
+
+interface Rectangle {
+  width: number;
+  height: number;
+}
+
+interface TextContent {
+  text: string;
+  color: string;
+  size: number;
+}
+
+interface Area {
+  shape: string;
+  position: Position;
+  color: string;
+  border_color: string;
+  rectangle?: Rectangle;
+  text?: TextContent;
+  rotation?: number;
+}
+
+interface Seat {
+  seat_guid: string;
+  seat_number: string;
+  position: Position;
+  category: string;
+  status?: string;
+  radius?: number;
+}
+
+interface Row {
+  position: Position;
+  seats: Seat[];
+}
+
+interface Zone {
+  position: Position;
+  rows: Row[];
+  areas?: Area[];
+}
+
+interface Category {
+  name: string;
+  color: string;
+}
+
+interface SeatData {
+  name: string;
+  size: Size;
+  zones: Zone[];
+  categories: Category[];
+}
+
+interface StatusConfig {
+  outline: string;
+  width: number;
+}
+
+interface SeatStats {
+  available: number;
+  unavailable: number;
+  void: number;
+  sold: number;
+}
+
+const SeatMapEditor: React.FC = () => {
+  const [seatData, setSeatData] = useState<SeatData | null>(null);
+  const [selectedSeats, setSelectedSeats] = useState<Set<string>>(new Set());
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [dragStart, setDragStart] = useState<Position | null>(null);
+  const [dragEnd, setDragEnd] = useState<Position | null>(null);
+  const [currentStatus, setCurrentStatus] = useState<string>('available');
+  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [editCategoryName, setEditCategoryName] = useState<string>('');
+  const [showOutput, setShowOutput] = useState<boolean>(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Status configurations
-  const statusConfig = {
+  const statusConfig: Record<string, StatusConfig> = {
     'available': { outline: '#22c55e', width: 2 },
     'unavailable': { outline: '#ef4444', width: 2 },
     'void': { outline: '#6b7280', width: 2 },
@@ -24,13 +102,14 @@ const SeatMapEditor = () => {
   };
 
   // Handle file upload
-  const handleFileUpload = (event) => {
-    const file = event.target.files[0];
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>): void => {
+    const file = event.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = (e: ProgressEvent<FileReader>) => {
         try {
-          const jsonData = JSON.parse(e.target.result);
+          if (!e.target?.result) return;
+          const jsonData = JSON.parse(e.target.result as string);
           setSeatData(jsonData);
           setSelectedSeats(new Set());
         } catch (error) {
@@ -42,7 +121,9 @@ const SeatMapEditor = () => {
   };
 
   // Handle canvas mouse events
-  const handleMouseDown = (e) => {
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>): void => {
+    if (!canvasRef.current) return;
+    
     const rect = canvasRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -52,8 +133,8 @@ const SeatMapEditor = () => {
     setDragEnd({ x, y });
   };
 
-  const handleMouseMove = (e) => {
-    if (!isDragging) return;
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>): void => {
+    if (!isDragging || !canvasRef.current) return;
     
     const rect = canvasRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -62,7 +143,7 @@ const SeatMapEditor = () => {
     setDragEnd({ x, y });
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (): void => {
     if (isDragging && dragStart && dragEnd) {
       selectSeatsInArea();
     }
@@ -72,7 +153,7 @@ const SeatMapEditor = () => {
   };
 
   // Select seats within drag area
-  const selectSeatsInArea = () => {
+  const selectSeatsInArea = (): void => {
     if (!seatData || !dragStart || !dragEnd) return;
 
     const minX = Math.min(dragStart.x, dragEnd.x);
@@ -80,11 +161,11 @@ const SeatMapEditor = () => {
     const minY = Math.min(dragStart.y, dragEnd.y);
     const maxY = Math.max(dragStart.y, dragEnd.y);
 
-    const newSelectedSeats = new Set();
+    const newSelectedSeats = new Set<string>();
 
-    seatData.zones.forEach(zone => {
-      zone.rows.forEach(row => {
-        row.seats.forEach(seat => {
+    seatData.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        row.seats.forEach((seat: Seat) => {
           const seatX = seat.position.x + zone.position.x + row.position.x;
           const seatY = seat.position.y + zone.position.y + row.position.y;
           
@@ -99,14 +180,14 @@ const SeatMapEditor = () => {
   };
 
   // Update selected seats status
-  const updateSelectedSeatsStatus = () => {
+  const updateSelectedSeatsStatus = (): void => {
     if (!seatData || selectedSeats.size === 0) return;
 
-    const updatedSeatData = { ...seatData };
+    const updatedSeatData: SeatData = { ...seatData };
     
-    updatedSeatData.zones.forEach(zone => {
-      zone.rows.forEach(row => {
-        row.seats.forEach(seat => {
+    updatedSeatData.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        row.seats.forEach((seat: Seat) => {
           if (selectedSeats.has(seat.seat_guid)) {
             seat.status = currentStatus.toUpperCase();
           }
@@ -119,22 +200,23 @@ const SeatMapEditor = () => {
   };
 
   // Draw the seat map
-  const drawSeatMap = useCallback(() => {
+  const drawSeatMap = useCallback((): void => {
     if (!canvasRef.current || !seatData) return;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
+    if (!ctx) return;
     
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Draw areas (background elements)
-    seatData.zones.forEach(zone => {
+    seatData.zones.forEach((zone: Zone) => {
       if (zone.areas) {
-        zone.areas.forEach(area => {
+        zone.areas.forEach((area: Area) => {
           ctx.save();
           
-          if (area.shape === 'rectangle') {
+          if (area.shape === 'rectangle' && area.rectangle) {
             ctx.fillStyle = area.color;
             ctx.strokeStyle = area.border_color;
             ctx.lineWidth = 1;
@@ -166,10 +248,10 @@ const SeatMapEditor = () => {
     });
 
     // Draw seats
-    seatData.zones.forEach(zone => {
-      zone.rows.forEach(row => {
-        row.seats.forEach(seat => {
-          const category = seatData.categories.find(cat => cat.name === seat.category);
+    seatData.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        row.seats.forEach((seat: Seat) => {
+          const category = seatData.categories.find((cat: Category) => cat.name === seat.category);
           const seatX = seat.position.x + zone.position.x + row.position.x;
           const seatY = seat.position.y + zone.position.y + row.position.y;
           const radius = seat.radius || 8;
@@ -226,11 +308,11 @@ const SeatMapEditor = () => {
   }, [drawSeatMap]);
 
   // Update category name
-  const updateCategoryName = (categoryId, newName) => {
+  const updateCategoryName = (categoryId: string, newName: string): void => {
     if (!seatData || !newName.trim()) return;
 
-    const updatedSeatData = { ...seatData };
-    const categoryIndex = updatedSeatData.categories.findIndex(cat => cat.name === categoryId);
+    const updatedSeatData: SeatData = { ...seatData };
+    const categoryIndex = updatedSeatData.categories.findIndex((cat: Category) => cat.name === categoryId);
     
     if (categoryIndex !== -1) {
       const oldName = updatedSeatData.categories[categoryIndex].name;
@@ -243,9 +325,9 @@ const SeatMapEditor = () => {
       };
       
       // Update all seats that reference this category
-      updatedSeatData.zones.forEach(zone => {
-        zone.rows.forEach(row => {
-          row.seats.forEach(seat => {
+      updatedSeatData.zones.forEach((zone: Zone) => {
+        zone.rows.forEach((row: Row) => {
+          row.seats.forEach((seat: Seat) => {
             if (seat.category === oldName) {
               seat.category = newName.trim();
             }
@@ -260,57 +342,73 @@ const SeatMapEditor = () => {
   };
 
   // Start editing category
-  const startEditingCategory = (categoryId, currentName) => {
+  const startEditingCategory = (categoryId: string, currentName: string): void => {
     setEditingCategory(categoryId);
     setEditCategoryName(currentName);
   };
 
   // Cancel editing category
-  const cancelEditingCategory = () => {
+  const cancelEditingCategory = (): void => {
     setEditingCategory(null);
     setEditCategoryName('');
   };
 
-  // Copy JSON to clipboard
-  const copyToClipboard = async () => {
+  // Show JSON output modal
+  const showJSONOutput = (): void => {
     if (!seatData) return;
-
-    const jsonOutput = JSON.stringify(seatData, null, 2);
-    
-    try {
-      await navigator.clipboard.writeText(jsonOutput);
-      alert('✅ JSON successfully copied to clipboard!');
-    } catch (error) {
-      console.error('Failed to copy to clipboard:', error);
-      // Fallback: show in modal for manual copy
-      setShowOutput(true);
-      alert('❌ Auto-copy failed. Opening modal for manual copy.');
-    }
+    setShowOutput(true);
   };
 
   // Reset selection
-  const resetSelection = () => {
+  const resetSelection = (): void => {
     setSelectedSeats(new Set());
   };
 
   // Get seat counts by status
-  const getSeatStats = () => {
-    if (!seatData) return {};
+  const getSeatStats = (): SeatStats => {
+    if (!seatData) return { available: 0, unavailable: 0, void: 0, sold: 0 };
     
-    const stats = { available: 0, unavailable: 0, void: 0, sold: 0 };
+    const stats: SeatStats = { available: 0, unavailable: 0, void: 0, sold: 0 };
     
-    seatData.zones.forEach(zone => {
-      zone.rows.forEach(row => {
-        row.seats.forEach(seat => {
+    seatData.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        row.seats.forEach((seat: Seat) => {
           const status = seat.status ? seat.status.toLowerCase() : 'available';
-          if (stats.hasOwnProperty(status)) {
-            stats[status]++;
+          if (status in stats) {
+            stats[status as keyof SeatStats]++;
           }
         });
       });
     });
     
     return stats;
+  };
+
+  // Handle key press events
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Enter') {
+      updateCategoryName(editingCategory || '', editCategoryName);
+    }
+    if (e.key === 'Escape') {
+      cancelEditingCategory();
+    }
+  };
+
+  // Handle clipboard copy
+  const handleClipboardCopy = async (): Promise<void> => {
+    if (!seatData) return;
+    
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(seatData, null, 2));
+      alert('✅ JSON successfully copied to clipboard!');
+    } catch (error) {
+      alert('❌ Auto-copy failed. Please select all text manually and copy.');
+    }
+  };
+
+  // Handle textarea focus
+  const handleTextareaFocus = (e: React.FocusEvent<HTMLTextAreaElement>): void => {
+    e.target.select();
   };
 
   const stats = getSeatStats();
@@ -338,11 +436,11 @@ const SeatMapEditor = () => {
             </button>
             {seatData && (
               <button
-                onClick={copyToClipboard}
+                onClick={showJSONOutput}
                 className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
               >
                 <Copy className="w-4 h-4 mr-2" />
-                Copy JSON
+                Show JSON Output
               </button>
             )}
           </div>
@@ -432,7 +530,7 @@ const SeatMapEditor = () => {
               <div>
                 <h3 className="text-lg font-semibold mb-3">Categories</h3>
                 <div className="space-y-3">
-                  {seatData.categories.map(category => (
+                  {seatData.categories.map((category: Category) => (
                     <div key={category.name} className="flex items-center space-x-3 p-2 border rounded-lg">
                       <div
                         className="w-6 h-6 rounded-full flex-shrink-0"
@@ -446,14 +544,7 @@ const SeatMapEditor = () => {
                             onChange={(e) => setEditCategoryName(e.target.value)}
                             className="flex-1 px-2 py-1 text-sm border rounded"
                             autoFocus
-                            onKeyPress={(e) => {
-                              if (e.key === 'Enter') {
-                                updateCategoryName(category.name, editCategoryName);
-                              }
-                              if (e.key === 'Escape') {
-                                cancelEditingCategory();
-                              }
-                            }}
+                            onKeyPress={handleKeyPress}
                           />
                           <button
                             onClick={() => updateCategoryName(category.name, editCategoryName)}
@@ -533,24 +624,20 @@ const SeatMapEditor = () => {
       </div>
 
       {/* JSON Output Modal */}
-      {showOutput && (
+      {showOutput && seatData && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg w-full max-w-4xl h-3/4 flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="text-lg font-semibold">JSON Output</h3>
+          <div className="bg-white rounded-lg w-full max-w-6xl h-5/6 flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b bg-gray-50">
+              <div>
+                <h3 className="text-lg font-semibold">JSON Output</h3>
+                <p className="text-sm text-gray-600">Select all text (Ctrl+A) and copy (Ctrl+C)</p>
+              </div>
               <div className="flex items-center space-x-2">
                 <button
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(JSON.stringify(seatData, null, 2));
-                      alert('✅ JSON successfully copied to clipboard!');
-                    } catch (error) {
-                      alert('❌ Failed to copy to clipboard. Please select and copy manually.');
-                    }
-                  }}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  onClick={handleClipboardCopy}
+                  className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                 >
-                  <Copy className="w-4 h-4 mr-2 inline" />
+                  <Copy className="w-4 h-4 mr-2" />
                   Copy All
                 </button>
                 <button
@@ -561,13 +648,32 @@ const SeatMapEditor = () => {
                 </button>
               </div>
             </div>
-            <div className="flex-1 p-4 overflow-auto">
-              <textarea
-                value={JSON.stringify(seatData, null, 2)}
-                readOnly
-                className="w-full h-full font-mono text-sm border rounded-lg p-4 resize-none"
-                style={{ minHeight: '500px' }}
-              />
+            <div className="flex-1 p-4 overflow-hidden">
+              <div className="h-full border rounded-lg overflow-hidden">
+                <textarea
+                  value={JSON.stringify(seatData, null, 2)}
+                  readOnly
+                  className="w-full h-full font-mono text-sm p-4 resize-none bg-gray-50 border-0 focus:outline-none"
+                  style={{ 
+                    minHeight: '100%',
+                    fontFamily: 'Monaco, Menlo, Consolas, "Courier New", monospace',
+                    fontSize: '12px',
+                    lineHeight: '1.4'
+                  }}
+                  onFocus={handleTextareaFocus}
+                />
+              </div>
+            </div>
+            <div className="p-4 border-t bg-gray-50">
+              <div className="flex items-center justify-between text-sm text-gray-600">
+                <span>
+                  Lines: {JSON.stringify(seatData, null, 2).split('\n').length} | 
+                  Characters: {JSON.stringify(seatData, null, 2).length.toLocaleString()}
+                </span>
+                <span className="text-blue-600 font-medium">
+                  💡 Tip: Click in the text area and press Ctrl+A to select all, then Ctrl+C to copy
+                </span>
+              </div>
             </div>
           </div>
         </div>
