@@ -2,7 +2,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 'use client';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Upload, Copy, RotateCcw, Save, Edit2, Check, X } from 'lucide-react';
+import { Upload, Copy, RotateCcw, Save, Edit2, Check, X, Download, MousePointer, Grid3X3, Rows } from 'lucide-react';
 
 // Type definitions
 interface Position {
@@ -26,7 +26,17 @@ interface TextContent {
   size: number;
 }
 
+interface Radius {
+  x: number;
+  y: number;
+}
+
+interface Ellipse {
+  radius: Radius;
+}
+
 interface Area {
+  uuid?: string;
   shape: string;
   position: Position;
   color: string;
@@ -34,6 +44,7 @@ interface Area {
   rectangle?: Rectangle;
   text?: TextContent;
   rotation?: number;
+  ellipse?: Ellipse;
 }
 
 interface Seat {
@@ -48,6 +59,7 @@ interface Seat {
 interface Row {
   position: Position;
   seats: Seat[];
+  row_number?: string;
 }
 
 interface Zone {
@@ -80,6 +92,10 @@ interface SeatStats {
   sold: number;
 }
 
+// Define types for selected objects and selection mode
+type SelectionMode = 'area' | 'row' | 'object';
+type SelectedObject = { type: 'seat' | 'area' | 'row', id: string, data: Seat | Area | Row, zoneIndex: number, rowIndex?: number, seatIndex?: number, areaIndex?: number };
+
 const SeatMapEditor: React.FC = () => {
   const [seatData, setSeatData] = useState<SeatData | null>(null);
   const [selectedSeats, setSelectedSeats] = useState<Set<string>>(new Set());
@@ -88,8 +104,15 @@ const SeatMapEditor: React.FC = () => {
   const [dragEnd, setDragEnd] = useState<Position | null>(null);
   const [currentStatus, setCurrentStatus] = useState<string>('available');
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>('area');
+  const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
+  const [objectProperties, setObjectProperties] = useState<Record<string, string | number>>({});
   const [editCategoryName, setEditCategoryName] = useState<string>('');
+  const [editingTitle, setEditingTitle] = useState<boolean>(false);
+  const [editTitle, setEditTitle] = useState<string>('');
   const [showOutput, setShowOutput] = useState<boolean>(false);
+  const [isDraggingObject, setIsDraggingObject] = useState<boolean>(false);
+  const [dragOffset, setDragOffset] = useState<Position | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -121,26 +144,205 @@ const SeatMapEditor: React.FC = () => {
   };
 
   // Handle canvas mouse events
+  // Find all seats in a row
+  const findSeatsInRow = (zoneIndex: number, rowIndex: number): Set<string> => {
+    if (!seatData) return new Set<string>();
+    
+    const seatsInRow = new Set<string>();
+    const row = seatData.zones[zoneIndex].rows[rowIndex];
+    
+    row.seats.forEach((seat: Seat) => {
+      seatsInRow.add(seat.seat_guid);
+    });
+    
+    return seatsInRow;
+  };
+
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>): void => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || !seatData) return;
     
     const rect = canvasRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    setIsDragging(true);
-    setDragStart({ x, y });
-    setDragEnd({ x, y });
+    if (selectionMode === 'area') {
+      // Check if we're clicking on a selected object first
+      if (selectedObject) {
+        // Get object position based on its type
+        let objectX = 0;
+        let objectY = 0;
+        
+        if (selectedObject.type === 'seat') {
+          const seat = selectedObject.data as Seat;
+          const row = seatData.zones[selectedObject.zoneIndex].rows[selectedObject.rowIndex!];
+          objectX = seat.position.x + row.position.x + seatData.zones[selectedObject.zoneIndex].position.x;
+          objectY = seat.position.y + row.position.y + seatData.zones[selectedObject.zoneIndex].position.y;
+        } else if (selectedObject.type === 'area') {
+          const area = selectedObject.data as Area;
+          objectX = area.position.x + seatData.zones[selectedObject.zoneIndex].position.x;
+          objectY = area.position.y + seatData.zones[selectedObject.zoneIndex].position.y;
+        } else if (selectedObject.type === 'row') {
+          const row = selectedObject.data as Row;
+          objectX = row.position.x + seatData.zones[selectedObject.zoneIndex].position.x;
+          objectY = row.position.y + seatData.zones[selectedObject.zoneIndex].position.y;
+        }
+        
+        // Check if click is near the object
+        const clickRadius = 20; // Pixels around object that count as clicking it
+        const distance = Math.sqrt(Math.pow(x - objectX, 2) + Math.pow(y - objectY, 2));
+        
+        if (distance <= clickRadius) {
+          // Start dragging the object
+          setIsDraggingObject(true);
+          setDragOffset({ x: objectX - x, y: objectY - y });
+          return;
+        }
+      }
+      
+      // If not dragging an object, start area selection
+      setIsDragging(true);
+      setDragStart({ x, y });
+      setDragEnd({ x, y });
+      setSelectedObject(null);
+      setSelectedSeats(new Set());
+    } else if (selectionMode === 'row') {
+      // Find seat under cursor to identify the row
+      const object = findObjectAtPosition(x, y);
+      if (object && object.type === 'seat' && object.rowIndex !== undefined) {
+        // Select the row that contains this seat
+        const rowObject: SelectedObject = {
+          type: 'row',
+          id: `row-${object.zoneIndex}-${object.rowIndex}`,
+          data: seatData.zones[object.zoneIndex].rows[object.rowIndex],
+          zoneIndex: object.zoneIndex,
+          rowIndex: object.rowIndex
+        };
+        
+        setSelectedObject(rowObject);
+        setObjectProperties(getObjectProperties(rowObject));
+        
+        // Select all seats in this row
+        setSelectedSeats(findSeatsInRow(object.zoneIndex, object.rowIndex));
+        
+        // Set up for dragging
+        const row = seatData.zones[object.zoneIndex].rows[object.rowIndex];
+        const rowX = row.position.x + seatData.zones[object.zoneIndex].position.x;
+        const rowY = row.position.y + seatData.zones[object.zoneIndex].position.y;
+        setIsDraggingObject(true);
+        setDragOffset({ x: rowX - x, y: rowY - y });
+      } else {
+        setSelectedObject(null);
+        setObjectProperties({});
+        setSelectedSeats(new Set());
+      }
+    } else if (selectionMode === 'object') {
+      // Find object under cursor
+      const object = findObjectAtPosition(x, y);
+      if (object) {
+        setSelectedObject(object);
+        setObjectProperties(getObjectProperties(object));
+        setSelectedSeats(new Set());
+        
+        // Set up for dragging
+        let objectX = 0;
+        let objectY = 0;
+        
+        if (object.type === 'seat') {
+          const seat = object.data as Seat;
+          const row = seatData.zones[object.zoneIndex].rows[object.rowIndex!];
+          objectX = seat.position.x + row.position.x + seatData.zones[object.zoneIndex].position.x;
+          objectY = seat.position.y + row.position.y + seatData.zones[object.zoneIndex].position.y;
+        } else if (object.type === 'area') {
+          const area = object.data as Area;
+          objectX = area.position.x + seatData.zones[object.zoneIndex].position.x;
+          objectY = area.position.y + seatData.zones[object.zoneIndex].position.y;
+        }
+        
+        setIsDraggingObject(true);
+        setDragOffset({ x: objectX - x, y: objectY - y });
+      } else {
+        setSelectedObject(null);
+        setObjectProperties({});
+        setSelectedSeats(new Set());
+      }
+    }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>): void => {
-    if (!isDragging || !canvasRef.current) return;
+    if (!canvasRef.current || !seatData) return;
     
     const rect = canvasRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    setDragEnd({ x, y });
+    if (isDragging) {
+      setDragEnd({ x, y });
+    } else if (isDraggingObject && selectedObject && dragOffset) {
+      // Calculate new position
+      const newX = x + dragOffset.x;
+      const newY = y + dragOffset.y;
+      
+      // Update object position directly
+      const updatedSeatData = { ...seatData };
+      const { type, zoneIndex, rowIndex, seatIndex, areaIndex } = selectedObject;
+      
+      if (type === 'seat' && rowIndex !== undefined && seatIndex !== undefined) {
+        const seat = updatedSeatData.zones[zoneIndex].rows[rowIndex].seats[seatIndex];
+        const zone = updatedSeatData.zones[zoneIndex];
+        const row = zone.rows[rowIndex];
+        
+        // Calculate relative position
+        const relativeX = newX - zone.position.x - row.position.x;
+        const relativeY = newY - zone.position.y - row.position.y;
+        
+        seat.position.x = relativeX;
+        seat.position.y = relativeY;
+      } else if (type === 'area' && areaIndex !== undefined && updatedSeatData.zones[zoneIndex].areas) {
+        const area = updatedSeatData.zones[zoneIndex].areas![areaIndex];
+        const zone = updatedSeatData.zones[zoneIndex];
+        
+        // Calculate relative position
+        const relativeX = newX - zone.position.x;
+        const relativeY = newY - zone.position.y;
+        
+        area.position.x = relativeX;
+        area.position.y = relativeY;
+      } else if (type === 'row' && rowIndex !== undefined) {
+        const row = updatedSeatData.zones[zoneIndex].rows[rowIndex];
+        const zone = updatedSeatData.zones[zoneIndex];
+        
+        // Calculate relative position
+        const relativeX = newX - zone.position.x;
+        const relativeY = newY - zone.position.y;
+        
+        row.position.x = relativeX;
+        row.position.y = relativeY;
+      }
+      
+      setSeatData(updatedSeatData);
+      
+      // Update object properties to reflect new position
+      if (type === 'row' && rowIndex !== undefined) {
+        const updatedRowObject: SelectedObject = {
+          type: 'row',
+          id: `row-${zoneIndex}-${rowIndex}`,
+          data: updatedSeatData.zones[zoneIndex].rows[rowIndex],
+          zoneIndex,
+          rowIndex
+        };
+        
+        setSelectedObject(updatedRowObject);
+        setObjectProperties(getObjectProperties(updatedRowObject));
+        
+        // Update selected seats to highlight all seats in the row
+        setSelectedSeats(findSeatsInRow(zoneIndex, rowIndex));
+      } else {
+        // For seats and areas, update properties
+        if (selectedObject) {
+          setObjectProperties(getObjectProperties(selectedObject));
+        }
+      }
+    }
   };
 
   const handleMouseUp = (): void => {
@@ -148,8 +350,10 @@ const SeatMapEditor: React.FC = () => {
       selectSeatsInArea();
     }
     setIsDragging(false);
+    setIsDraggingObject(false);
     setDragStart(null);
     setDragEnd(null);
+    setDragOffset(null);
   };
 
   // Select seats within drag area
@@ -211,9 +415,9 @@ const SeatMapEditor: React.FC = () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Draw areas (background elements)
-    seatData.zones.forEach((zone: Zone) => {
+    seatData.zones.forEach((zone: Zone, zoneIndex: number) => {
       if (zone.areas) {
-        zone.areas.forEach((area: Area) => {
+        zone.areas.forEach((area: Area, areaIndex: number) => {
           ctx.save();
           
           if (area.shape === 'rectangle' && area.rectangle) {
@@ -226,6 +430,40 @@ const SeatMapEditor: React.FC = () => {
             
             ctx.fillRect(x, y, area.rectangle.width, area.rectangle.height);
             ctx.strokeRect(x, y, area.rectangle.width, area.rectangle.height);
+            
+            // Highlight selected area
+            if (selectedObject?.type === 'area' && 
+                selectedObject.id === (area.uuid || `area-${zoneIndex}-${areaIndex}`)) {
+              ctx.strokeStyle = '#fbbf24';
+              ctx.lineWidth = 3;
+              ctx.strokeRect(x - 2, y - 2, area.rectangle.width + 4, area.rectangle.height + 4);
+            }
+          }
+
+          if (area.shape === 'ellipse' && area.ellipse?.radius) {
+            ctx.fillStyle = area.color;
+            ctx.strokeStyle = area.border_color;
+            ctx.lineWidth = 1;
+
+            const centerX = area.position.x + zone.position.x;
+            const centerY = area.position.y + zone.position.y;
+            const radiusX = area.ellipse.radius.x;
+            const radiusY = area.ellipse.radius.y;
+
+            ctx.beginPath();
+            ctx.ellipse(centerX, centerY, radiusX, radiusY, area.rotation ? (area.rotation * Math.PI) / 180 : 0, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.stroke();
+            
+            // Highlight selected area
+            if (selectedObject?.type === 'area' && 
+                selectedObject.id === (area.uuid || `area-${zoneIndex}-${areaIndex}`)) {
+              ctx.strokeStyle = '#fbbf24';
+              ctx.lineWidth = 3;
+              ctx.beginPath();
+              ctx.ellipse(centerX, centerY, radiusX + 2, radiusY + 2, area.rotation ? (area.rotation * Math.PI) / 180 : 0, 0, 2 * Math.PI);
+              ctx.stroke();
+            }
           }
           
           if (area.shape === 'text' && area.text) {
@@ -270,7 +508,8 @@ const SeatMapEditor: React.FC = () => {
           ctx.stroke();
 
           // Highlight selected seats
-          if (selectedSeats.has(seat.seat_guid)) {
+          if (selectedSeats.has(seat.seat_guid) || 
+              (selectedObject?.type === 'seat' && selectedObject.id === seat.seat_guid)) {
             ctx.beginPath();
             ctx.arc(seatX, seatY, radius + 3, 0, 2 * Math.PI);
             ctx.strokeStyle = '#fbbf24';
@@ -300,7 +539,7 @@ const SeatMapEditor: React.FC = () => {
       );
       ctx.setLineDash([]);
     }
-  }, [seatData, selectedSeats, isDragging, dragStart, dragEnd]);
+  }, [seatData, selectedSeats, isDragging, dragStart, dragEnd, selectedObject]);
 
   // Redraw when data changes
   useEffect(() => {
@@ -384,6 +623,340 @@ const SeatMapEditor: React.FC = () => {
     return stats;
   };
 
+  // Find object at position
+  const findObjectAtPosition = (x: number, y: number): SelectedObject | null => {
+    if (!seatData) return null;
+    
+    // Store all objects that match the position
+    const matchingObjects: SelectedObject[] = [];
+    
+    // Check for seats first
+    for (let zoneIndex = 0; zoneIndex < seatData.zones.length; zoneIndex++) {
+      const zone = seatData.zones[zoneIndex];
+      
+      for (let rowIndex = 0; rowIndex < zone.rows.length; rowIndex++) {
+        const row = zone.rows[rowIndex];
+        
+        for (let seatIndex = 0; seatIndex < row.seats.length; seatIndex++) {
+          const seat = row.seats[seatIndex];
+          const seatX = seat.position.x + zone.position.x + row.position.x;
+          const seatY = seat.position.y + zone.position.y + row.position.y;
+          const radius = seat.radius || 8;
+          
+          // Check if click is within seat circle
+          const distance = Math.sqrt(Math.pow(x - seatX, 2) + Math.pow(y - seatY, 2));
+          if (distance <= radius) {
+            matchingObjects.push({
+              type: 'seat',
+              id: seat.seat_guid,
+              data: seat,
+              zoneIndex,
+              rowIndex,
+              seatIndex
+            });
+          }
+        }
+      }
+      
+      // Check for areas
+      if (zone.areas) {
+        for (let areaIndex = 0; areaIndex < zone.areas.length; areaIndex++) {
+          const area = zone.areas[areaIndex];
+          const areaX = area.position.x + zone.position.x;
+          const areaY = area.position.y + zone.position.y;
+          
+          // Check if click is within rectangle area
+          if (area.shape === 'rectangle' && area.rectangle) {
+            if (
+              x >= areaX && 
+              x <= areaX + area.rectangle.width && 
+              y >= areaY && 
+              y <= areaY + area.rectangle.height
+            ) {
+              matchingObjects.push({
+                type: 'area',
+                id: area.uuid || `area-${zoneIndex}-${areaIndex}`,
+                data: area,
+                zoneIndex,
+                areaIndex
+              });
+            }
+          }
+          
+          // Check if click is within ellipse area
+          if (area.shape === 'ellipse' && area.ellipse?.radius) {
+            const radiusX = area.ellipse.radius.x;
+            const radiusY = area.ellipse.radius.y;
+            
+            // Normalize the point to the ellipse's coordinate system
+            const normalizedX = x - areaX;
+            const normalizedY = y - areaY;
+            
+            // Check if point is inside ellipse using the ellipse equation
+            if ((Math.pow(normalizedX, 2) / Math.pow(radiusX, 2)) + 
+                (Math.pow(normalizedY, 2) / Math.pow(radiusY, 2)) <= 1) {
+              matchingObjects.push({
+                type: 'area',
+                id: area.uuid || `area-${zoneIndex}-${areaIndex}`,
+                data: area,
+                zoneIndex,
+                areaIndex
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    // If no objects found, return null
+    if (matchingObjects.length === 0) return null;
+    
+    // If only one object found, return it
+    if (matchingObjects.length === 1) return matchingObjects[0];
+    
+    // If multiple objects found and we have a selected object already,
+    // cycle through them to select the next one
+    if (selectedObject) {
+      const currentIndex = matchingObjects.findIndex(obj => 
+        obj.type === selectedObject.type && obj.id === selectedObject.id
+      );
+      
+      if (currentIndex !== -1) {
+        // Return the next object in the array (or the first if we're at the end)
+        return matchingObjects[(currentIndex + 1) % matchingObjects.length];
+      }
+    }
+    
+    // Default to the first matching object
+    return matchingObjects[0];
+  };
+  
+  // Get object properties for editing
+  const getObjectProperties = (object: SelectedObject): Record<string, string | number> => {
+    if (object.type === 'seat') {
+      const seat = object.data as Seat;
+      return {
+        seat_number: seat.seat_number,
+        category: seat.category,
+        status: seat.status || 'available',
+        position_x: seat.position.x,
+        position_y: seat.position.y,
+        radius: seat.radius || 8
+      };
+    } else if (object.type === 'row') {
+      const row = object.data as Row;
+      // Count seats in this row
+      const seatCount = row.seats.length;
+      
+      return {
+        row_number: row.row_number || '',
+        position_x: row.position.x,
+        position_y: row.position.y,
+        seat_count: seatCount
+      };
+    } else if (object.type === 'area') {
+      const area = object.data as Area;
+      const properties: Record<string, string | number> = {
+        shape: area.shape,
+        color: area.color,
+        border_color: area.border_color,
+        position_x: area.position.x,
+        position_y: area.position.y,
+        rotation: area.rotation || 0
+      };
+      
+      if (area.rectangle) {
+        properties.width = area.rectangle.width;
+        properties.height = area.rectangle.height;
+      }
+      
+      if (area.ellipse?.radius) {
+        properties.radius_x = area.ellipse.radius.x;
+        properties.radius_y = area.ellipse.radius.y;
+      }
+      
+      if (area.text) {
+        properties.text = area.text.text;
+        properties.text_color = area.text.color;
+        properties.text_size = area.text.size;
+      }
+      
+      return properties;
+    }
+    
+    return {};
+  };
+  
+  // Update object property
+  const updateObjectProperty = (property: string, value: string | number): void => {
+    if (!selectedObject || !seatData) return;
+    
+    const updatedSeatData = { ...seatData };
+    const { type, zoneIndex, rowIndex, seatIndex, areaIndex } = selectedObject;
+    
+    if (type === 'seat' && rowIndex !== undefined && seatIndex !== undefined) {
+      const seat = updatedSeatData.zones[zoneIndex].rows[rowIndex].seats[seatIndex];
+      
+      // Handle special cases for nested properties
+      if (property === 'position_x') {
+        seat.position.x = Number(value);
+      } else if (property === 'position_y') {
+        seat.position.y = Number(value);
+      } else {
+        // Handle direct properties with type safety
+        if (property === 'seat_number' && typeof value === 'string') {
+          seat.seat_number = value;
+        } else if (property === 'category' && typeof value === 'string') {
+          seat.category = value;
+        } else if (property === 'status' && typeof value === 'string') {
+          seat.status = value;
+        } else if (property === 'radius' && typeof value === 'number') {
+          seat.radius = value;
+        }
+      }
+    } else if (type === 'area' && areaIndex !== undefined && updatedSeatData.zones[zoneIndex].areas) {
+      const area = updatedSeatData.zones[zoneIndex].areas![areaIndex];
+      
+      // Handle special cases for nested properties
+      if (property === 'position_x') {
+        area.position.x = Number(value);
+      } else if (property === 'position_y') {
+        area.position.y = Number(value);
+      } else if (property === 'width' && area.rectangle) {
+        area.rectangle.width = Number(value);
+      } else if (property === 'height' && area.rectangle) {
+        area.rectangle.height = Number(value);
+      } else if (property === 'radius_x' && area.ellipse?.radius) {
+        area.ellipse.radius.x = Number(value);
+      } else if (property === 'radius_y' && area.ellipse?.radius) {
+        area.ellipse.radius.y = Number(value);
+      } else if (property === 'text' && area.text && typeof value === 'string') {
+          area.text.text = value;
+        } else if (property === 'text_color' && area.text && typeof value === 'string') {
+          area.text.color = value;
+        } else if (property === 'text_size' && area.text && typeof value === 'number') {
+          area.text.size = value;
+      } else {
+        // Handle direct properties with type safety
+        if (property === 'shape' && typeof value === 'string') {
+          area.shape = value as 'rectangle' | 'ellipse' | 'text';
+        } else if (property === 'color' && typeof value === 'string') {
+          area.color = value;
+        } else if (property === 'border_color' && typeof value === 'string') {
+          area.border_color = value;
+        } else if (property === 'rotation' && typeof value === 'number') {
+          area.rotation = value;
+        }
+      }
+    } else if (type === 'row' && rowIndex !== undefined) {
+      const row = updatedSeatData.zones[zoneIndex].rows[rowIndex];
+      
+      // Handle special cases for nested properties
+      if (property === 'position_x') {
+        const oldX = row.position.x;
+        const newX = Number(value);
+        const deltaX = newX - oldX;
+        
+        // Update row position
+        row.position.x = newX;
+        
+        // Update all seats in the row to maintain relative positions
+        row.seats.forEach(seat => {
+          seat.position.x = seat.position.x; // No change needed as seats are positioned relative to row
+        });
+      } else if (property === 'position_y') {
+        const oldY = row.position.y;
+        const newY = Number(value);
+        const deltaY = newY - oldY;
+        
+        // Update row position
+        row.position.y = newY;
+        
+        // Update all seats in the row to maintain relative positions
+        row.seats.forEach(seat => {
+          seat.position.y = seat.position.y; // No change needed as seats are positioned relative to row
+        });
+      } else if (property === 'row_number' && typeof value === 'string') {
+          row.row_number = value;
+        }
+    }
+    
+    setSeatData(updatedSeatData);
+    
+    // Update selected object and properties
+    if (type === 'row' && rowIndex !== undefined) {
+      // For rows, we need to recreate the selected object since findObjectAtPosition doesn't handle rows
+      const updatedRowObject: SelectedObject = {
+        type: 'row',
+        id: `row-${zoneIndex}-${rowIndex}`,
+        data: updatedSeatData.zones[zoneIndex].rows[rowIndex],
+        zoneIndex,
+        rowIndex
+      };
+      
+      setSelectedObject(updatedRowObject);
+      setObjectProperties(getObjectProperties(updatedRowObject));
+      
+      // Update selected seats to highlight all seats in the row
+      setSelectedSeats(findSeatsInRow(zoneIndex, rowIndex));
+    } else {
+      // For seats and areas, update the selected object with new data
+      const updatedObjectData = selectedObject.data as Seat | Area;
+      if ('position' in updatedObjectData) {
+        const updatedObject = findObjectAtPosition(
+          updatedObjectData.position.x + updatedSeatData.zones[zoneIndex].position.x,
+          updatedObjectData.position.y + updatedSeatData.zones[zoneIndex].position.y
+        );
+        
+        if (updatedObject) {
+          setSelectedObject(updatedObject);
+          setObjectProperties(getObjectProperties(updatedObject));
+        }
+      }
+    }
+  };
+  
+  // Handle property input change
+  const handlePropertyChange = (property: string, value: string): void => {
+    setObjectProperties(prev => ({
+      ...prev,
+      [property]: isNaN(Number(value)) ? value : Number(value)
+    }));
+  };
+  
+  // Apply property changes
+  const applyPropertyChanges = (): void => {
+    if (!objectProperties || Object.keys(objectProperties).length === 0) return;
+    
+    Object.entries(objectProperties).forEach(([property, value]) => {
+      updateObjectProperty(property, value);
+    });
+  };
+  
+  // Toggle selection mode
+  const toggleSelectionMode = (mode: SelectionMode): void => {
+    setSelectionMode(mode);
+    setSelectedSeats(new Set());
+    setSelectedObject(null);
+    setObjectProperties({});
+  };
+  
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 's') {
+        toggleSelectionMode('area');
+      } else if (e.key === 'r') {
+        toggleSelectionMode('row');
+      } else if (e.key === 'a') {
+        toggleSelectionMode('object');
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+  
   // Handle key press events
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'Enter') {
@@ -404,6 +977,27 @@ const SeatMapEditor: React.FC = () => {
     } catch (error) {
       alert('❌ Auto-copy failed. Please select all text manually and copy.');
     }
+  };
+
+  // Handle JSON download
+  const handleJSONDownload = (): void => {
+    if (!seatData) return;
+    
+    const jsonString = JSON.stringify(seatData, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${seatData.name.replace(/\s+/g, '_').toLowerCase()}_seat_map.json`;
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
   };
 
   // Handle textarea focus
@@ -451,6 +1045,77 @@ const SeatMapEditor: React.FC = () => {
         {/* Sidebar */}
         <div className="w-80 bg-white border-r p-4 overflow-y-auto">
           <div className="space-y-6">
+            {/* Selection Mode Toggle */}
+            <div>
+              <h3 className="text-lg font-semibold mb-3">Selection Mode</h3>
+              <div className="flex space-x-2 mb-4">
+                <button
+                  onClick={() => toggleSelectionMode('area')}
+                  className={`flex-1 py-2 px-2 rounded-lg ${selectionMode === 'area' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+                  title="Area Selection: Select multiple seats by dragging (Shortcut: S)"
+                >
+                  <div className="flex flex-col items-center justify-center">
+                    <Grid3X3 className="w-5 h-5 mb-1" />
+                    <span className="text-xs">Area (S)</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => toggleSelectionMode('row')}
+                  className={`flex-1 py-2 px-2 rounded-lg ${selectionMode === 'row' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+                  title="Row Selection: Select and edit row properties (Shortcut: R)"
+                >
+                  <div className="flex flex-col items-center justify-center">
+                    <Rows className="w-5 h-5 mb-1" />
+                    <span className="text-xs">Row (R)</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => toggleSelectionMode('object')}
+                  className={`flex-1 py-2 px-2 rounded-lg ${selectionMode === 'object' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+                  title="Object Selection: Select individual seats or areas (Shortcut: A)"
+                >
+                  <div className="flex flex-col items-center justify-center">
+                    <MousePointer className="w-5 h-5 mb-1" />
+                    <span className="text-xs">Object (A)</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+            
+            {/* Object Properties */}
+            {(selectionMode === 'object' || selectionMode === 'row') && selectedObject && (
+              <div className="mb-4">
+                <h3 className="text-lg font-semibold mb-3">Object Properties</h3>
+                <div className="space-y-3 border rounded-lg p-3">
+                  <div className="text-sm font-medium text-gray-700">
+                    Type: {selectedObject.type.charAt(0).toUpperCase() + selectedObject.type.slice(1)}
+                  </div>
+                  
+                  {Object.entries(objectProperties).map(([property, value]) => (
+                    <div key={property} className="grid grid-cols-3 gap-2 items-center">
+                      <label className="text-sm font-medium text-gray-700 col-span-1 capitalize">
+                        {property.replace('_', ' ')}:
+                      </label>
+                      <input
+                        type={typeof value === 'number' ? 'number' : 'text'}
+                        value={value.toString()}
+                        onChange={(e) => handlePropertyChange(property, e.target.value)}
+                        className="col-span-2 px-2 py-1 text-sm border rounded"
+                      />
+                    </div>
+                  ))}
+                  
+                  <button
+                    onClick={applyPropertyChanges}
+                    className="w-full mt-2 flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    <Save className="w-4 h-4 mr-2" />
+                    Apply Changes
+                  </button>
+                </div>
+              </div>
+            )}
+            
             {/* Status Selection */}
             <div>
               <h3 className="text-lg font-semibold mb-3">Status Update</h3>
@@ -583,7 +1248,58 @@ const SeatMapEditor: React.FC = () => {
           {seatData ? (
             <div className="bg-white rounded-lg shadow-sm border">
               <div className="p-4 border-b">
-                <h2 className="text-xl font-semibold">{seatData.name}</h2>
+                {editingTitle ? (
+                  <div className="flex items-center space-x-2 mb-2">
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      className="flex-1 px-3 py-2 text-xl font-semibold border rounded"
+                      autoFocus
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter') {
+                          if (editTitle.trim()) {
+                            setSeatData({...seatData, name: editTitle.trim()});
+                            setEditingTitle(false);
+                          }
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        if (editTitle.trim()) {
+                          setSeatData({...seatData, name: editTitle.trim()});
+                          setEditingTitle(false);
+                        }
+                      }}
+                      className="p-2 text-green-600 hover:bg-green-100 rounded"
+                    >
+                      <Check className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingTitle(false);
+                        setEditTitle(seatData.name);
+                      }}
+                      className="p-2 text-red-600 hover:bg-red-100 rounded"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between mb-2">
+                    <h2 className="text-xl font-semibold">{seatData.name}</h2>
+                    <button
+                      onClick={() => {
+                        setEditTitle(seatData.name);
+                        setEditingTitle(true);
+                      }}
+                      className="p-1 text-blue-600 hover:bg-blue-100 rounded"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
                 <p className="text-gray-600 text-sm mt-1">
                   Click and drag to select multiple seats, then update their status
                 </p>
@@ -593,7 +1309,7 @@ const SeatMapEditor: React.FC = () => {
                   ref={canvasRef}
                   width={seatData.size.width}
                   height={seatData.size.height}
-                  className="border border-gray-200 cursor-crosshair"
+                  className={`border border-gray-200 ${selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'}`}
                   onMouseDown={handleMouseDown}
                   onMouseMove={handleMouseMove}
                   onMouseUp={handleMouseUp}
@@ -633,6 +1349,13 @@ const SeatMapEditor: React.FC = () => {
                 <p className="text-sm text-gray-600">Select all text (Ctrl+A) and copy (Ctrl+C)</p>
               </div>
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={handleJSONDownload}
+                  className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Download JSON
+                </button>
                 <button
                   onClick={handleClipboardCopy}
                   className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
