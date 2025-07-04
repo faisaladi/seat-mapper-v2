@@ -103,10 +103,12 @@ const SeatMapEditor: React.FC = () => {
   const [dragStart, setDragStart] = useState<Position | null>(null);
   const [dragEnd, setDragEnd] = useState<Position | null>(null);
   const [currentStatus, setCurrentStatus] = useState<string>('available');
+  const [currentCategory, setCurrentCategory] = useState<string>('');
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('area');
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
   const [objectProperties, setObjectProperties] = useState<Record<string, string | number>>({});
+  const [isMoveEnabled, setIsMoveEnabled] = useState<boolean>(false);
   const [editCategoryName, setEditCategoryName] = useState<string>('');
   const [editingTitle, setEditingTitle] = useState<boolean>(false);
   const [editTitle, setEditTitle] = useState<string>('');
@@ -167,7 +169,7 @@ const SeatMapEditor: React.FC = () => {
     
     if (selectionMode === 'area') {
       // Check if we're clicking on a selected object first
-      if (selectedObject) {
+      if (selectedObject && isMoveEnabled) {
         // Get object position based on its type
         let objectX = 0;
         let objectY = 0;
@@ -225,11 +227,13 @@ const SeatMapEditor: React.FC = () => {
         setSelectedSeats(findSeatsInRow(object.zoneIndex, object.rowIndex));
         
         // Set up for dragging
-        const row = seatData.zones[object.zoneIndex].rows[object.rowIndex];
-        const rowX = row.position.x + seatData.zones[object.zoneIndex].position.x;
-        const rowY = row.position.y + seatData.zones[object.zoneIndex].position.y;
-        setIsDraggingObject(true);
-        setDragOffset({ x: rowX - x, y: rowY - y });
+        if (isMoveEnabled) {
+          const row = seatData.zones[object.zoneIndex].rows[object.rowIndex];
+          const rowX = row.position.x + seatData.zones[object.zoneIndex].position.x;
+          const rowY = row.position.y + seatData.zones[object.zoneIndex].position.y;
+          setIsDraggingObject(true);
+          setDragOffset({ x: rowX - x, y: rowY - y });
+        }
       } else {
         setSelectedObject(null);
         setObjectProperties({});
@@ -244,22 +248,23 @@ const SeatMapEditor: React.FC = () => {
         setSelectedSeats(new Set());
         
         // Set up for dragging
-        let objectX = 0;
-        let objectY = 0;
-        
-        if (object.type === 'seat') {
-          const seat = object.data as Seat;
-          const row = seatData.zones[object.zoneIndex].rows[object.rowIndex!];
-          objectX = seat.position.x + row.position.x + seatData.zones[object.zoneIndex].position.x;
-          objectY = seat.position.y + row.position.y + seatData.zones[object.zoneIndex].position.y;
-        } else if (object.type === 'area') {
-          const area = object.data as Area;
-          objectX = area.position.x + seatData.zones[object.zoneIndex].position.x;
-          objectY = area.position.y + seatData.zones[object.zoneIndex].position.y;
+        if (isMoveEnabled) {
+          let objectX = 0;
+          let objectY = 0;
+          
+          if (object.type === 'seat') {
+            const seat = object.data as Seat;
+            const row = seatData.zones[object.zoneIndex].rows[object.rowIndex!];
+            objectX = seat.position.x + row.position.x + seatData.zones[object.zoneIndex].position.x;
+            objectY = seat.position.y + row.position.y + seatData.zones[object.zoneIndex].position.y;
+          } else if (object.type === 'area') {
+            const area = object.data as Area;
+            objectX = area.position.x + seatData.zones[object.zoneIndex].position.x;
+            objectY = area.position.y + seatData.zones[object.zoneIndex].position.y;
+          }
+          setIsDraggingObject(true);
+          setDragOffset({ x: objectX - x, y: objectY - y });
         }
-        
-        setIsDraggingObject(true);
-        setDragOffset({ x: objectX - x, y: objectY - y });
       } else {
         setSelectedObject(null);
         setObjectProperties({});
@@ -277,7 +282,7 @@ const SeatMapEditor: React.FC = () => {
     
     if (isDragging) {
       setDragEnd({ x, y });
-    } else if (isDraggingObject && selectedObject && dragOffset) {
+    } else if (isDraggingObject && selectedObject && dragOffset && isMoveEnabled) {
       // Calculate new position
       const newX = x + dragOffset.x;
       const newY = y + dragOffset.y;
@@ -394,6 +399,26 @@ const SeatMapEditor: React.FC = () => {
         row.seats.forEach((seat: Seat) => {
           if (selectedSeats.has(seat.seat_guid)) {
             seat.status = currentStatus.toUpperCase();
+          }
+        });
+      });
+    });
+
+    setSeatData(updatedSeatData);
+    setSelectedSeats(new Set());
+  };
+
+  // Update selected seats category
+  const updateSelectedSeatsCategory = (): void => {
+    if (!seatData || selectedSeats.size === 0 || !currentCategory) return;
+
+    const updatedSeatData: SeatData = { ...seatData };
+    
+    updatedSeatData.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        row.seats.forEach((seat: Seat) => {
+          if (selectedSeats.has(seat.seat_guid)) {
+            seat.category = currentCategory;
           }
         });
       });
@@ -545,6 +570,13 @@ const SeatMapEditor: React.FC = () => {
   useEffect(() => {
     drawSeatMap();
   }, [drawSeatMap]);
+
+  // Initialize currentCategory when seatData loads
+  useEffect(() => {
+    if (seatData && seatData.categories && seatData.categories.length > 0 && !currentCategory) {
+      setCurrentCategory(seatData.categories[0].name);
+    }
+  }, [seatData, currentCategory]);
 
   // Update category name
   const updateCategoryName = (categoryId: string, newName: string): void => {
@@ -1080,6 +1112,24 @@ const SeatMapEditor: React.FC = () => {
                   </div>
                 </button>
               </div>
+              <div className="mb-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">Enable Movement</span>
+                  <button
+                    onClick={() => setIsMoveEnabled(prev => !prev)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
+                      isMoveEnabled ? 'bg-purple-600' : 'bg-gray-200'
+                    }`}
+                    title="Toggle direct object movement"
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        isMoveEnabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
             </div>
             
             {/* Object Properties */}
@@ -1147,6 +1197,53 @@ const SeatMapEditor: React.FC = () => {
                 >
                   <RotateCcw className="w-4 h-4 mr-2" />
                   Clear Selection
+                </button>
+              </div>
+            </div>
+
+            {/* Category Selection */}
+            <div>
+              <h3 className="text-lg font-semibold mb-3">Category Update</h3>
+              <div className="w-full border border-gray-300 rounded-lg">
+                <div className="p-2 bg-gray-50 border-b text-sm font-medium text-gray-700">
+                  Select Category:
+                </div>
+                <div className="max-h-32 overflow-y-auto">
+                  <div
+                    className={`p-2 cursor-pointer hover:bg-blue-50 flex items-center space-x-2 ${
+                      currentCategory === '' ? 'bg-blue-100' : ''
+                    }`}
+                    onClick={() => setCurrentCategory('')}
+                  >
+                    <div className="w-4 h-4 border border-gray-300 rounded-full bg-white" />
+                    <span className="text-sm">No Category</span>
+                  </div>
+                  {seatData?.categories.map((category: Category) => (
+                    <div
+                      key={category.name}
+                      className={`p-2 cursor-pointer hover:bg-blue-50 flex items-center space-x-2 ${
+                        currentCategory === category.name ? 'bg-blue-100' : ''
+                      }`}
+                      onClick={() => setCurrentCategory(category.name)}
+                    >
+                      <div
+                        className="w-4 h-4 rounded-full border border-gray-300"
+                        style={{ backgroundColor: category.color }}
+                      />
+                      <span className="text-sm truncate">{category.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="mt-3 space-y-2">
+                <button
+                  onClick={updateSelectedSeatsCategory}
+                  disabled={selectedSeats.size === 0 || !currentCategory}
+                  className="w-full flex items-center justify-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-400 transition-colors"
+                >
+                  <Save className="w-4 h-4 mr-2" />
+                  Update {selectedSeats.size} Selected Seat(s) Category
                 </button>
               </div>
             </div>
