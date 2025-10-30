@@ -24,6 +24,7 @@ interface TextContent {
   text: string;
   color: string;
   size: number;
+  position?: Position;
 }
 
 interface Radius {
@@ -39,6 +40,10 @@ interface Circle {
   radius: number;
 }
 
+interface Polygon {
+  points: Position[];
+}
+
 interface Area {
   uuid?: string;
   shape: string;
@@ -50,6 +55,7 @@ interface Area {
   rotation?: number;
   ellipse?: Ellipse;
   circle?: Circle;
+  polygon?: Polygon;
 }
 
 interface Seat {
@@ -602,6 +608,58 @@ const SeatMapEditor: React.FC = () => {
             }
           }
           
+          if (area.shape === 'polygon' && area.polygon?.points && area.polygon.points.length >= 3) {
+            ctx.fillStyle = area.color;
+            ctx.strokeStyle = area.border_color;
+            ctx.lineWidth = 1;
+
+            const x = area.position.x + zone.position.x;
+            const y = area.position.y + zone.position.y;
+
+            ctx.save();
+            ctx.translate(x, y);
+            if (area.rotation) {
+              ctx.rotate((area.rotation * Math.PI) / 180);
+            }
+            const pts = area.polygon.points;
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) {
+              ctx.lineTo(pts[i].x, pts[i].y);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Draw text inside polygon if it exists, using local text position if provided
+            if (area.text && area.text.text && area.text.text.trim() !== '') {
+              ctx.fillStyle = area.text.color || '#000000';
+              ctx.font = `${area.text.size || 16}px Arial`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+
+              const tx = area.text.position?.x ?? 0;
+              const ty = area.text.position?.y ?? 0;
+              ctx.fillText(area.text.text, tx, ty);
+            }
+
+            // Highlight selected area
+            if (selectedObject?.type === 'area' && 
+                selectedObject.id === (area.uuid || `area-${zoneIndex}-${areaIndex}`)) {
+              ctx.strokeStyle = '#fbbf24';
+              ctx.lineWidth = 3;
+              ctx.beginPath();
+              ctx.moveTo(pts[0].x, pts[0].y);
+              for (let i = 1; i < pts.length; i++) {
+                ctx.lineTo(pts[i].x, pts[i].y);
+              }
+              ctx.closePath();
+              ctx.stroke();
+            }
+
+            ctx.restore();
+          }
+          
           if (area.shape === 'text' && area.text) {
             ctx.fillStyle = area.text.color;
             ctx.font = `${area.text.size}px Arial`;
@@ -768,6 +826,19 @@ const SeatMapEditor: React.FC = () => {
     return stats;
   };
 
+  // Point-in-polygon test using ray casting algorithm (expects local coordinates)
+  const isPointInPolygon = (px: number, py: number, points: Position[]): boolean => {
+    let inside = false;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const xi = points[i].x, yi = points[i].y;
+      const xj = points[j].x, yj = points[j].y;
+      const intersect = ((yi > py) !== (yj > py)) &&
+        (px < (xj - xi) * (py - yi) / ((yj - yi) || 1e-12) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  };
+
   // Find object at position
   const findObjectAtPosition = (x: number, y: number): SelectedObject | null => {
     if (!seatData) return null;
@@ -856,6 +927,21 @@ const SeatMapEditor: React.FC = () => {
             // Check if point is inside ellipse using the ellipse equation
             if ((Math.pow(normalizedX, 2) / Math.pow(radiusX, 2)) + 
                 (Math.pow(normalizedY, 2) / Math.pow(radiusY, 2)) <= 1) {
+              matchingObjects.push({
+                type: 'area',
+                id: area.uuid || `area-${zoneIndex}-${areaIndex}`,
+                data: area,
+                zoneIndex,
+                areaIndex
+              });
+            }
+          }
+
+          // Check if click is within polygon area
+          if (area.shape === 'polygon' && area.polygon?.points && area.polygon.points.length >= 3) {
+            const localX = x - areaX;
+            const localY = y - areaY;
+            if (isPointInPolygon(localX, localY, area.polygon.points)) {
               matchingObjects.push({
                 type: 'area',
                 id: area.uuid || `area-${zoneIndex}-${areaIndex}`,
@@ -1006,7 +1092,7 @@ const SeatMapEditor: React.FC = () => {
       } else {
         // Handle direct properties with type safety
         if (property === 'shape' && typeof value === 'string') {
-          area.shape = value as 'rectangle' | 'ellipse' | 'text';
+          area.shape = value as 'rectangle' | 'ellipse' | 'text' | 'circle' | 'polygon';
         } else if (property === 'color' && typeof value === 'string') {
           area.color = value;
         } else if (property === 'border_color' && typeof value === 'string') {
@@ -1353,9 +1439,9 @@ const SeatMapEditor: React.FC = () => {
                     <div className="w-4 h-4 border border-gray-300 rounded-full bg-white" />
                     <span className="text-sm">No Category</span>
                   </div>
-                  {seatData?.categories.map((category: Category) => (
+                  {seatData?.categories.map((category: Category, idx: number) => (
                     <div
-                      key={category.name}
+                      key={idx}
                       className={`p-2 cursor-pointer hover:bg-blue-50 flex items-center space-x-2 ${
                         currentCategory === category.name ? 'bg-blue-100' : ''
                       }`}
@@ -1427,8 +1513,8 @@ const SeatMapEditor: React.FC = () => {
               <div>
                 <h3 className="text-lg font-semibold mb-3">Categories</h3>
                 <div className="space-y-3">
-                  {seatData.categories.map((category: Category) => (
-                    <div key={category.name} className="flex items-center space-x-3 p-2 border rounded-lg">
+                  {seatData.categories.map((category: Category, idx: number) => (
+                    <div key={idx} className="flex items-center space-x-3 p-2 border rounded-lg">
                       <div
                         className="w-6 h-6 rounded-full flex-shrink-0"
                         style={{ backgroundColor: category.color }}
