@@ -2,7 +2,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 'use client';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Upload, Copy, RotateCcw, Save, Edit2, Check, X, Download, MousePointer, Grid3X3, Rows } from 'lucide-react';
+import { Upload, Copy, RotateCcw, Save, Edit2, Check, X, Download, MousePointer, Grid3X3, Rows, ZoomIn, ZoomOut } from 'lucide-react';
 
 // Type definitions
 interface Position {
@@ -35,6 +35,10 @@ interface Ellipse {
   radius: Radius;
 }
 
+interface Circle {
+  radius: number;
+}
+
 interface Area {
   uuid?: string;
   shape: string;
@@ -45,6 +49,7 @@ interface Area {
   text?: TextContent;
   rotation?: number;
   ellipse?: Ellipse;
+  circle?: Circle;
 }
 
 interface Seat {
@@ -118,6 +123,32 @@ const SeatMapEditor: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Zoom state and controls
+  const [zoom, setZoom] = useState<number>(1);
+  const MIN_ZOOM = 0.3;
+  const MAX_ZOOM = 3;
+  const ZOOM_STEP = 0.1;
+
+  const zoomIn = (): void => {
+    setZoom((prev) => Math.min(MAX_ZOOM, parseFloat((prev + ZOOM_STEP).toFixed(2))));
+  };
+
+  const zoomOut = (): void => {
+    setZoom((prev) => Math.max(MIN_ZOOM, parseFloat((prev - ZOOM_STEP).toFixed(2))));
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>): void => {
+    if (!seatData) return;
+    // Only handle pinch-zoom (typically sends wheel with ctrlKey)
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    if (e.deltaY < 0) {
+      zoomIn();
+    } else if (e.deltaY > 0) {
+      zoomOut();
+    }
+  };
+
   // Status configurations
   const statusConfig: Record<string, StatusConfig> = {
     'available': { outline: '#22c55e', width: 2 },
@@ -164,8 +195,8 @@ const SeatMapEditor: React.FC = () => {
     if (!canvasRef.current || !seatData) return;
     
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const x = (e.clientX - rect.left) / zoom;
+    const y = (e.clientY - rect.top) / zoom;
     
     if (selectionMode === 'area') {
       // Check if we're clicking on a selected object first
@@ -277,8 +308,8 @@ const SeatMapEditor: React.FC = () => {
     if (!canvasRef.current || !seatData) return;
     
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const x = (e.clientX - rect.left) / zoom;
+    const y = (e.clientY - rect.top) / zoom;
     
     if (isDragging) {
       setDragEnd({ x, y });
@@ -373,8 +404,8 @@ const SeatMapEditor: React.FC = () => {
     const newSelectedSeats = new Set<string>();
 
     seatData.zones.forEach((zone: Zone) => {
-      zone.rows.forEach((row: Row) => {
-        row.seats.forEach((seat: Seat) => {
+      [...zone.rows].reverse().forEach((row: Row) => {
+        [...row.seats].reverse().forEach((seat: Seat) => {
           const seatX = seat.position.x + zone.position.x + row.position.x;
           const seatY = seat.position.y + zone.position.y + row.position.y;
           
@@ -436,8 +467,15 @@ const SeatMapEditor: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     
-    // Clear canvas
+    // Reset transform and clear canvas
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
+    // Apply zoom scaling
+    ctx.save();
+    ctx.scale(zoom, zoom);
 
     // Draw areas (background elements)
     seatData.zones.forEach((zone: Zone, zoneIndex: number) => {
@@ -456,12 +494,69 @@ const SeatMapEditor: React.FC = () => {
             ctx.fillRect(x, y, area.rectangle.width, area.rectangle.height);
             ctx.strokeRect(x, y, area.rectangle.width, area.rectangle.height);
             
+            // Draw text inside rectangle if it exists
+            if (area.text && area.text.text && area.text.text.trim() !== '') {
+              ctx.fillStyle = area.text.color || '#000000';
+              ctx.font = `${area.text.size || 16}px Arial`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              
+              ctx.save();
+              ctx.translate(x + area.rectangle.width / 2, y + area.rectangle.height / 2);
+              if (area.rotation) {
+                ctx.rotate((area.rotation * Math.PI) / 180);
+              }
+              ctx.fillText(area.text.text, 0, 0);
+              ctx.restore();
+            }
+            
             // Highlight selected area
             if (selectedObject?.type === 'area' && 
                 selectedObject.id === (area.uuid || `area-${zoneIndex}-${areaIndex}`)) {
               ctx.strokeStyle = '#fbbf24';
               ctx.lineWidth = 3;
               ctx.strokeRect(x - 2, y - 2, area.rectangle.width + 4, area.rectangle.height + 4);
+            }
+          }
+
+          if (area.shape === 'circle' && area.circle?.radius) {
+            ctx.fillStyle = area.color;
+            ctx.strokeStyle = area.border_color;
+            ctx.lineWidth = 1;
+
+            const centerX = area.position.x + zone.position.x;
+            const centerY = area.position.y + zone.position.y;
+            const radius = area.circle.radius;
+
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.stroke();
+            
+            // Draw text inside circle if it exists
+            if (area.text && area.text.text && area.text.text.trim() !== '') {
+              ctx.fillStyle = area.text.color || '#000000';
+              ctx.font = `${area.text.size || 16}px Arial`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              
+              ctx.save();
+              ctx.translate(centerX, centerY);
+              if (area.rotation) {
+                ctx.rotate((area.rotation * Math.PI) / 180);
+              }
+              ctx.fillText(area.text.text, 0, 0);
+              ctx.restore();
+            }
+            
+            // Highlight selected area
+            if (selectedObject?.type === 'area' && 
+                selectedObject.id === (area.uuid || `area-${zoneIndex}-${areaIndex}`)) {
+              ctx.strokeStyle = '#fbbf24';
+              ctx.lineWidth = 3;
+              ctx.beginPath();
+              ctx.arc(centerX, centerY, radius + 2, 0, 2 * Math.PI);
+              ctx.stroke();
             }
           }
 
@@ -479,6 +574,22 @@ const SeatMapEditor: React.FC = () => {
             ctx.ellipse(centerX, centerY, radiusX, radiusY, area.rotation ? (area.rotation * Math.PI) / 180 : 0, 0, 2 * Math.PI);
             ctx.fill();
             ctx.stroke();
+            
+            // Draw text inside ellipse if it exists
+            if (area.text && area.text.text && area.text.text.trim() !== '') {
+              ctx.fillStyle = area.text.color || '#000000';
+              ctx.font = `${area.text.size || 16}px Arial`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              
+              ctx.save();
+              ctx.translate(centerX, centerY);
+              if (area.rotation) {
+                ctx.rotate((area.rotation * Math.PI) / 180);
+              }
+              ctx.fillText(area.text.text, 0, 0);
+              ctx.restore();
+            }
             
             // Highlight selected area
             if (selectedObject?.type === 'area' && 
@@ -564,7 +675,9 @@ const SeatMapEditor: React.FC = () => {
       );
       ctx.setLineDash([]);
     }
-  }, [seatData, selectedSeats, isDragging, dragStart, dragEnd, selectedObject]);
+    // Restore after drawing
+    ctx.restore();
+  }, [seatData, selectedSeats, isDragging, dragStart, dragEnd, selectedObject, zoom]);
 
   // Redraw when data changes
   useEffect(() => {
@@ -715,6 +828,22 @@ const SeatMapEditor: React.FC = () => {
             }
           }
           
+          // Check if click is within circle area
+          if (area.shape === 'circle' && area.circle?.radius) {
+            const radius = area.circle.radius;
+            const distance = Math.sqrt(Math.pow(x - areaX, 2) + Math.pow(y - areaY, 2));
+            
+            if (distance <= radius) {
+              matchingObjects.push({
+                type: 'area',
+                id: area.uuid || `area-${zoneIndex}-${areaIndex}`,
+                data: area,
+                zoneIndex,
+                areaIndex
+              });
+            }
+          }
+          
           // Check if click is within ellipse area
           if (area.shape === 'ellipse' && area.ellipse?.radius) {
             const radiusX = area.ellipse.radius.x;
@@ -802,15 +931,19 @@ const SeatMapEditor: React.FC = () => {
         properties.height = area.rectangle.height;
       }
       
+      if (area.circle?.radius != null) {
+        properties.radius = area.circle.radius;
+      }
+      
       if (area.ellipse?.radius) {
-        properties.radius_x = area.ellipse.radius.x;
-        properties.radius_y = area.ellipse.radius.y;
+        properties.radius_x = area.ellipse.radius.x || 0;
+        properties.radius_y = area.ellipse.radius.y || 0;
       }
       
       if (area.text) {
-        properties.text = area.text.text;
-        properties.text_color = area.text.color;
-        properties.text_size = area.text.size;
+        properties.text = area.text.text || '';
+        properties.text_color = area.text.color || '#000000';
+        properties.text_size = area.text.size || 16;
       }
       
       return properties;
@@ -858,6 +991,8 @@ const SeatMapEditor: React.FC = () => {
         area.rectangle.width = Number(value);
       } else if (property === 'height' && area.rectangle) {
         area.rectangle.height = Number(value);
+      } else if (property === 'radius' && area.circle) {
+        area.circle.radius = Number(value);
       } else if (property === 'radius_x' && area.ellipse?.radius) {
         area.ellipse.radius.x = Number(value);
       } else if (property === 'radius_y' && area.ellipse?.radius) {
@@ -1148,7 +1283,7 @@ const SeatMapEditor: React.FC = () => {
                       </label>
                       <input
                         type={typeof value === 'number' ? 'number' : 'text'}
-                        value={value.toString()}
+                        value={value != null ? value.toString() : ''}
                         onChange={(e) => handlePropertyChange(property, e.target.value)}
                         className="col-span-2 px-2 py-1 text-sm border rounded"
                       />
@@ -1401,17 +1536,37 @@ const SeatMapEditor: React.FC = () => {
                   Click and drag to select multiple seats, then update their status
                 </p>
               </div>
-              <div className="p-4">
-                <canvas
-                  ref={canvasRef}
-                  width={seatData.size.width}
-                  height={seatData.size.height}
-                  className={`border border-gray-200 ${selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'}`}
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseUp}
-                />
+              <div className="p-4 relative overflow-auto max-h-[calc(100vh-200px)]">
+                <div className="inline-block">
+                  <canvas
+                    ref={canvasRef}
+                    width={seatData.size.width}
+                    height={seatData.size.height}
+                    className={`border border-gray-200 ${selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'}`}
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp}
+                    onWheel={handleWheel}
+                  />
+                </div>
+                {/* Floating Zoom Controls anchored to scroll container (sticky) */}
+                <div className="sticky left-4 bottom-4 flex flex-col items-start space-y-2 z-20 pointer-events-none">
+                  <button
+                    onClick={zoomOut}
+                    className="inline-flex items-center justify-center w-10 h-10 bg-white border shadow hover:bg-gray-100 rounded-sm pointer-events-auto"
+                    title="Zoom Out"
+                  >
+                    <ZoomOut className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={zoomIn}
+                    className="inline-flex items-center justify-center w-10 h-10 bg-white border shadow hover:bg-gray-100 rounded-sm pointer-events-auto"
+                    title="Zoom In"
+                  >
+                    <ZoomIn className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
