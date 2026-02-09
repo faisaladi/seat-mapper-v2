@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable react-hooks/exhaustive-deps */
 'use client';
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Upload, Copy, RotateCcw, Save, Edit2, Check, X, Download, MousePointer, Grid3X3, Rows, ZoomIn, ZoomOut } from 'lucide-react';
 
 // Type definitions
@@ -128,6 +128,19 @@ const SeatMapEditor: React.FC = () => {
   const [dragOffset, setDragOffset] = useState<Position | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Performance optimizations
+  const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const seatPositionsRef = useRef<Map<string, {x: number, y: number, radius: number}>>(new Map());
+
+  // Memoized category map for O(1) lookup
+  const categoryMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (seatData?.categories) {
+      seatData.categories.forEach(cat => map.set(cat.name, cat.color));
+    }
+    return map;
+  }, [seatData?.categories]);
 
   // Zoom state and controls
   const [zoom, setZoom] = useState<number>(1);
@@ -163,6 +176,35 @@ const SeatMapEditor: React.FC = () => {
     'sold': { outline: '#000000', width: 3 }
   };
 
+  // Validate and fix duplicate IDs in the data
+  const validateAndFixData = (data: SeatData): { data: SeatData, fixedCount: number } => {
+    const newData = JSON.parse(JSON.stringify(data)); // Deep copy
+    const seenSeatIds = new Set<string>();
+    let fixedCount = 0;
+
+    // Fix Seat GUIDs
+    newData.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        row.seats.forEach((seat: Seat) => {
+          if (seenSeatIds.has(seat.seat_guid)) {
+            // Generate a new unique ID
+            let newId = seat.seat_guid;
+            let counter = 1;
+            while (seenSeatIds.has(newId)) {
+              newId = `${seat.seat_guid}_copy${counter}`;
+              counter++;
+            }
+            seat.seat_guid = newId;
+            fixedCount++;
+          }
+          seenSeatIds.add(seat.seat_guid);
+        });
+      });
+    });
+
+    return { data: newData, fixedCount };
+  };
+
   // Handle file upload
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>): void => {
     const file = event.target.files?.[0];
@@ -172,7 +214,15 @@ const SeatMapEditor: React.FC = () => {
         try {
           if (!e.target?.result) return;
           const jsonData = JSON.parse(e.target.result as string);
-          setSeatData(jsonData);
+          
+          // Validate and fix data
+          const { data: validatedData, fixedCount } = validateAndFixData(jsonData);
+          
+          if (fixedCount > 0) {
+            alert(`Fixed ${fixedCount} duplicate seat IDs in the uploaded file.`);
+          }
+          
+          setSeatData(validatedData);
           setSelectedSeats(new Set());
         } catch (error) {
           alert('Invalid JSON file');
@@ -465,23 +515,29 @@ const SeatMapEditor: React.FC = () => {
     setSelectedSeats(new Set());
   };
 
-  // Draw the seat map
-  const drawSeatMap = useCallback((): void => {
-    if (!canvasRef.current || !seatData) return;
+  // Draw static elements (zones, areas, seats) to offscreen canvas
+  const drawStaticLayer = useCallback((): void => {
+    if (!seatData) return;
 
-    const canvas = canvasRef.current;
+    // Create or resize static canvas
+    if (!staticCanvasRef.current) {
+      staticCanvasRef.current = document.createElement('canvas');
+    }
+    
+    const canvas = staticCanvasRef.current;
+    if (canvas.width !== seatData.size.width || canvas.height !== seatData.size.height) {
+      canvas.width = seatData.size.width;
+      canvas.height = seatData.size.height;
+    }
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
-    // Reset transform and clear canvas
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.restore();
 
-    // Apply zoom scaling
-    ctx.save();
-    ctx.scale(zoom, zoom);
+    // Clear static canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Clear positions map
+    seatPositionsRef.current.clear();
 
     // Draw areas (background elements)
     seatData.zones.forEach((zone: Zone, zoneIndex: number) => {
@@ -515,14 +571,6 @@ const SeatMapEditor: React.FC = () => {
               ctx.fillText(area.text.text, 0, 0);
               ctx.restore();
             }
-            
-            // Highlight selected area
-            if (selectedObject?.type === 'area' && 
-                selectedObject.id === (area.uuid || `area-${zoneIndex}-${areaIndex}`)) {
-              ctx.strokeStyle = '#fbbf24';
-              ctx.lineWidth = 3;
-              ctx.strokeRect(x - 2, y - 2, area.rectangle.width + 4, area.rectangle.height + 4);
-            }
           }
 
           if (area.shape === 'circle' && area.circle?.radius) {
@@ -553,16 +601,6 @@ const SeatMapEditor: React.FC = () => {
               }
               ctx.fillText(area.text.text, 0, 0);
               ctx.restore();
-            }
-            
-            // Highlight selected area
-            if (selectedObject?.type === 'area' && 
-                selectedObject.id === (area.uuid || `area-${zoneIndex}-${areaIndex}`)) {
-              ctx.strokeStyle = '#fbbf24';
-              ctx.lineWidth = 3;
-              ctx.beginPath();
-              ctx.arc(centerX, centerY, radius + 2, 0, 2 * Math.PI);
-              ctx.stroke();
             }
           }
 
@@ -595,16 +633,6 @@ const SeatMapEditor: React.FC = () => {
               }
               ctx.fillText(area.text.text, 0, 0);
               ctx.restore();
-            }
-            
-            // Highlight selected area
-            if (selectedObject?.type === 'area' && 
-                selectedObject.id === (area.uuid || `area-${zoneIndex}-${areaIndex}`)) {
-              ctx.strokeStyle = '#fbbf24';
-              ctx.lineWidth = 3;
-              ctx.beginPath();
-              ctx.ellipse(centerX, centerY, radiusX + 2, radiusY + 2, area.rotation ? (area.rotation * Math.PI) / 180 : 0, 0, 2 * Math.PI);
-              ctx.stroke();
             }
           }
           
@@ -642,21 +670,7 @@ const SeatMapEditor: React.FC = () => {
               const ty = area.text.position?.y ?? 0;
               ctx.fillText(area.text.text, tx, ty);
             }
-
-            // Highlight selected area
-            if (selectedObject?.type === 'area' && 
-                selectedObject.id === (area.uuid || `area-${zoneIndex}-${areaIndex}`)) {
-              ctx.strokeStyle = '#fbbf24';
-              ctx.lineWidth = 3;
-              ctx.beginPath();
-              ctx.moveTo(pts[0].x, pts[0].y);
-              for (let i = 1; i < pts.length; i++) {
-                ctx.lineTo(pts[i].x, pts[i].y);
-              }
-              ctx.closePath();
-              ctx.stroke();
-            }
-
+            
             ctx.restore();
           }
           
@@ -683,15 +697,19 @@ const SeatMapEditor: React.FC = () => {
     seatData.zones.forEach((zone: Zone) => {
       zone.rows.forEach((row: Row) => {
         row.seats.forEach((seat: Seat) => {
-          const category = seatData.categories.find((cat: Category) => cat.name === seat.category);
+          // Use Map for O(1) lookup
+          const categoryColor = categoryMap.get(seat.category) || '#cccccc';
           const seatX = seat.position.x + zone.position.x + row.position.x;
           const seatY = seat.position.y + zone.position.y + row.position.y;
           const radius = seat.radius || 8;
+          
+          // Store position for fast lookup in dynamic layer
+          seatPositionsRef.current.set(seat.seat_guid, { x: seatX, y: seatY, radius });
 
           // Draw seat circle
           ctx.beginPath();
           ctx.arc(seatX, seatY, radius, 0, 2 * Math.PI);
-          ctx.fillStyle = category ? category.color : '#cccccc';
+          ctx.fillStyle = categoryColor;
           ctx.fill();
 
           // Draw status outline
@@ -701,16 +719,6 @@ const SeatMapEditor: React.FC = () => {
           ctx.lineWidth = statusStyle.width;
           ctx.stroke();
 
-          // Highlight selected seats
-          if (selectedSeats.has(seat.seat_guid) || 
-              (selectedObject?.type === 'seat' && selectedObject.id === seat.seat_guid)) {
-            ctx.beginPath();
-            ctx.arc(seatX, seatY, radius + 3, 0, 2 * Math.PI);
-            ctx.strokeStyle = '#fbbf24';
-            ctx.lineWidth = 3;
-            ctx.stroke();
-          }
-
           // Draw seat number
           ctx.fillStyle = '#000000';
           ctx.font = '10px Arial';
@@ -719,6 +727,106 @@ const SeatMapEditor: React.FC = () => {
         });
       });
     });
+  }, [seatData, categoryMap]);
+
+  // Update static layer when data changes
+  useEffect(() => {
+    drawStaticLayer();
+  }, [drawStaticLayer]);
+
+  // Draw the seat map (dynamic layer)
+  const drawSeatMap = useCallback((): void => {
+    if (!canvasRef.current || !seatData) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Reset transform and clear canvas
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
+    // Apply zoom scaling
+    ctx.save();
+    ctx.scale(zoom, zoom);
+
+    // Draw static layer
+    if (staticCanvasRef.current) {
+        ctx.drawImage(staticCanvasRef.current, 0, 0);
+    } else {
+        // Fallback if static layer not ready
+        drawStaticLayer();
+        if (staticCanvasRef.current) {
+            ctx.drawImage(staticCanvasRef.current, 0, 0);
+        }
+    }
+
+    // Draw Area Highlights (Selected Object)
+    if (selectedObject?.type === 'area' && seatData) {
+        const zone = seatData.zones[selectedObject.zoneIndex];
+        if (zone && zone.areas && selectedObject.areaIndex !== undefined) {
+            const area = zone.areas[selectedObject.areaIndex];
+            const x = area.position.x + zone.position.x;
+            const y = area.position.y + zone.position.y;
+            
+            ctx.strokeStyle = '#fbbf24';
+            ctx.lineWidth = 3;
+
+            if (area.shape === 'rectangle' && area.rectangle) {
+                ctx.strokeRect(x - 2, y - 2, area.rectangle.width + 4, area.rectangle.height + 4);
+            } else if (area.shape === 'circle' && area.circle?.radius) {
+                ctx.beginPath();
+                ctx.arc(x, y, area.circle.radius + 2, 0, 2 * Math.PI);
+                ctx.stroke();
+            } else if (area.shape === 'ellipse' && area.ellipse?.radius) {
+                const rx = area.ellipse.radius.x;
+                const ry = area.ellipse.radius.y;
+                ctx.beginPath();
+                ctx.ellipse(x, y, rx + 2, ry + 2, area.rotation ? (area.rotation * Math.PI) / 180 : 0, 0, 2 * Math.PI);
+                ctx.stroke();
+            } else if (area.shape === 'polygon' && area.polygon?.points) {
+                ctx.save();
+                ctx.translate(x, y);
+                if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
+                const pts = area.polygon.points;
+                ctx.beginPath();
+                ctx.moveTo(pts[0].x, pts[0].y);
+                for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+                ctx.closePath();
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+    }
+
+    // Highlight selected seats
+    if (selectedSeats.size > 0) {
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 3;
+        
+        selectedSeats.forEach(seatGuid => {
+            const pos = seatPositionsRef.current.get(seatGuid);
+            if (pos) {
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, pos.radius + 3, 0, 2 * Math.PI);
+                ctx.stroke();
+            }
+        });
+    }
+    
+    // Highlight single selected object seat
+    if (selectedObject?.type === 'seat') {
+        const pos = seatPositionsRef.current.get(selectedObject.id);
+        if (pos) {
+             ctx.strokeStyle = '#fbbf24';
+             ctx.lineWidth = 3;
+             ctx.beginPath();
+             ctx.arc(pos.x, pos.y, pos.radius + 3, 0, 2 * Math.PI);
+             ctx.stroke();
+        }
+    }
 
     // Draw selection rectangle
     if (isDragging && dragStart && dragEnd) {
@@ -735,9 +843,9 @@ const SeatMapEditor: React.FC = () => {
     }
     // Restore after drawing
     ctx.restore();
-  }, [seatData, selectedSeats, isDragging, dragStart, dragEnd, selectedObject, zoom]);
+  }, [seatData, selectedSeats, isDragging, dragStart, dragEnd, selectedObject, zoom, drawStaticLayer]);
 
-  // Redraw when data changes
+  // Redraw when dynamic state changes
   useEffect(() => {
     drawSeatMap();
   }, [drawSeatMap]);

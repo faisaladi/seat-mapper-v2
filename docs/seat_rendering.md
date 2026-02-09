@@ -21,7 +21,7 @@ Top-level keys used for rendering:
     - `position`: `{ x, y }` — row origin (relative to zone).
     - `row_number?`: Optional label.
     - `seats`: Array of seat objects:
-      - `seat_guid`: Unique ID used for selection.
+      - `seat_guid`: Unique ID used for selection. Must be unique across the entire map. The editor will automatically fix duplicates on load.
       - `seat_number`: Label rendered near the seat.
       - `position`: `{ x, y }` — seat position (relative to row).
       - `category`: String matched against `categories[].name` for fill color.
