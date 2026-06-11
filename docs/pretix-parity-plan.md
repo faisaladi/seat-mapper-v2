@@ -10,7 +10,10 @@
 ## 1. Context
 
 - Today the tool renders pretix/TipTip seating JSONs and bulk-edits seat **status** (and category).
-- Plans are authored in seats.pretix.eu, exported, then **manually relabeled**: pretix stores row identity as `row_number` ("AA") + bare `seat_number` ("18") + `seat_label` template ("AA%s"), but TipTip renders **only the seat label**, so every seat must be renamed to a fully-qualified label (e.g. `AA-18`) by hand. This is the single biggest time sink.
+- Plans are authored in seats.pretix.eu, exported, then **manually relabeled**: pretix stores row identity as `row_number` ("AA") + bare `seat_number` ("18") + `seat_label` template ("AA%s"), but TipTip renders **only the seat label**, so every seat must be renamed to a fully-qualified label by hand. The most common organizer convention is `{row}{n}` (seat_label `A%s` → "A18"); some events use separators or section prefixes (`Q3-97`). In pretix the `seat_label` template must be set **row by row** — that is the time sink to eliminate.
+- **Second confirmed time sink — category ↔ ticket mapping:** TipTip requires each category `name` to be the **ticket UUID of the target event/show**. For multi-show runs the same physical plan must be re-uploaded once per show, each time hand-pasting that show's ticket UUIDs from Retool into the category names. (See N9 below.)
+- Zones: pretix-style multi-zone is **not used** in TipTip — single big map; "zone" is encoded into the seat label when needed. The editor can stay single-zone-first.
+- `seat_guid`/`uuid` are the TipTip seat identifiers — the wizard must never rewrite them, and no readable-guid regeneration feature is needed.
 - Reference plan analyzed: *Opus Deccenium 1* (1,144 seats, 97 rows, 23 areas: 4 rect / 7 ellipse / 7 polygon / 5 text, curved rows, `row_number_position` start/end/both). Findings:
   - Curved rows are plain per-seat `position` offsets along an arc — generatable with math, no special schema.
   - `seat_guid` is human-readable (`Groundfloor-G-9`) and **21 duplicate guids exist in the source plan** (the tool currently auto-renames them silently on upload).
@@ -34,14 +37,15 @@
 
 | # | Item | Why / What | Prio | Effort | ICE | Kano |
 |---|---|---|---|---|---|---|
-| N1 | **Seat numbering & labeling wizard** | The headline feature. Scope: all rows / selected rows. Set row names (keep, A–Z, AA–AZ, numeric, custom list, reverse). Set seat numbers (start, step, direction L→R / R→L, restart per row or continue). Label template with live preview (`{row}-{n}`, `{row}{n}`, …). Writes `seat_number` (TipTip mode) and/or `row_number` + `seat_label` (pretix mode). Never touches `seat_guid`. | P0 | M | 567 | Performance |
+| N1 | **Seat numbering & labeling wizard** | The headline feature. Scope: **all rows at once** (the thing pretix can't do) or selected rows. Set row names (keep, A–Z, AA–AZ, numeric, custom list, reverse). Set seat numbers (schemes like pretix: 1,2,3… / a,b,c / A,B,C; starting-at; reversed; restart per row or continue). Label template with live preview — default `{row}{n}` (the common organizer convention), presets for `{row}-{n}` and section prefixes (`Q3-{n}`). Writes `seat_number` (TipTip mode) and/or `row_number` + `seat_label` (pretix mode). Never touches `seat_guid`/`uuid` — those are TipTip's seat identifiers. | P0 | M | 567 | Performance |
 | N2 | **Render row labels on canvas** | Honor `row_number` + `row_number_position` (start/end/both) like pretix. Needed to *see* what N1 did. | P0 | S | 504 | Basic |
 | N3 | **Undo / redo** | Snapshot stack (cap ~50) before each mutation; ⌘Z / ⇧⌘Z. Snapshot approach is fine at this data size; patch-based can come with the NEXT-phase refactor. A bulk tool without undo is dangerous. | P0 | S | 320 | Basic |
-| N4 | **Category UX** | Friendly display names for UUID categories (editable alias + color swatch + per-category seat counts; click category → select/highlight its seats). Color editing + create/delete category. | P1 | S | 432 | Performance |
+| N4 | **Category UX** | Friendly display names for UUID categories (editable alias + color swatch + per-category seat counts; click category → select/highlight its seats). Color editing + create/delete category. Foundation for N9. | P1 | S | 432 | Performance |
 | N5 | **Replace `alert()`/blocking dialogs with toasts; duplicate-guid report** | Upload currently fires a blocking alert and silently renames 21 duplicate guids — show a non-blocking toast + downloadable report of what changed instead. | P1 | XS | 405 | Basic |
 | N6 | **Autosave + recent files** | Persist working copy to localStorage/IndexedDB, restore on reload, warn before closing with unsaved changes. Drag-and-drop JSON onto the window to open. | P1 | S | 504 | Basic |
 | N7 | **Status paint mode** | Pick a status, then click/drag across seats to apply directly — faster than select → dropdown → update for scattered seats. | P2 | S | 392 | Performance |
 | N8 | **Find seat / jump to** | Search by label or guid, pan-zoom to result. Invaluable on 4k-seat maps. | P2 | XS | 320 | Performance |
+| N9 | **Category ↔ ticket-UUID mapping (show profiles)** | Kills the second confirmed time sink. Keep a stable **display name** per category (e.g. "VIP", "CAT 1") and manage **per-show profiles**: paste each show's ticket UUIDs once → export a JSON per show with category `name` swapped to that show's UUIDs. Seats keep referencing the category; only the export rewrites names. Storage: prefer an extra field in the JSON (e.g. `categories[].label`) **if TipTip's importer tolerates unknown fields — verify with one test upload first**; fallback is a sidecar kept in localStorage keyed by plan name. | P0 | S–M | 540 | Performance |
 
 ✅ Already shipped (June 2026): cursor-anchored zoom/pan, fit-to-content, HiDPI rendering, dark-mode text fix, typing-safe shortcuts.
 
@@ -54,9 +58,9 @@ Maps to the pretix toolbar: select / row-select / seat-grid / single-seat / shap
 | # | Item | Notes | Prio | Effort |
 |---|---|---|---|---|
 | X1 | **Architecture refactor** (prerequisite) | Split the ~2k-line component: `model/` (types + pure mutation ops), `engine/` (canvas hooks: viewport, hit-test, render), `tools/` (one state machine per tool), `panels/` (React UI). Central reducer store; migrate undo to patches. | P0 | M |
-| X2 | **Object transform** | Move (done for single objects), multi-select with shift, marquee in object mode, keyboard nudge, rotate handle, resize handles for areas, delete key. | P0 | M |
+| X2 | **Object transform + contextual sidebar** | Move (done for single objects), multi-select with shift, marquee in object mode, keyboard nudge, rotate handle, resize handles for areas, delete key. Right sidebar becomes **context-sensitive like pretix** (a pattern Faisal explicitly likes): nothing selected → plan panel (name, size, seat count, categories); row selected → row panel (seat spacing, row number, row label, show-row-numbers start/end checkboxes, numbering scheme, starting-at, reversed, seat label template, radius, category); seat → seat panel (radius, number, ID read-only, category); shape → shape panel (rotation, dimensions, fill/border colors, text + size/position/color, stacking order). | P0 | M–L |
 | X3 | **Add seats: grid & row tools** | Click-drag to stamp an n×m seat grid with spacing controls; add a single row; append/insert seats in a row; set default radius/category. | P0 | L |
-| X4 | **Curved row tool** | Select row(s) → drag a bend handle (or numeric radius/angle). Recompute per-seat offsets along the arc with equal spacing; straighten action. Also: align/distribute rows. | P0 | M |
+| X4 | **Curved row tool** | Pretix-style: select row(s) → drag a **perpendicular bend handle** from the row center (or numeric value). Recompute per-seat offsets along the arc keeping the row's seat spacing; straighten action; seat-spacing field on the row panel. Also: align/distribute rows. | P0 | M |
 | X5 | **Shape drawing** | Rectangle, circle/ellipse, polygon (click-to-place vertices, drag to edit, double-click to finish), standalone text. Style panel: fill, border, rotation, text. | P1 | L |
 | X6 | **Copy / paste / duplicate** | Within and across zones; pasted seats get fresh uuids/guids; smart label offset (paste row "A" → suggest "B"). | P1 | M |
 | X7 | **Snap & grid** | Toggleable grid, snap-to-grid and snap-to-alignment guides while dragging. | P1 | S |
@@ -87,6 +91,7 @@ flowchart LR
     N2[Row labels on canvas]
     N3[Undo/redo snapshots]
     N4[Category UX]
+    N9[Show profiles: ticket-UUID mapping]
     N5[Toasts + guid report]
   end
   subgraph NEXT [NEXT · 2–3 mo]
@@ -102,6 +107,7 @@ flowchart LR
     L3[Export & versioning]
   end
   N1 --> N2
+  N4 --> N9
   N3 --> X1
   X1 --> X2 --> X3 --> X4
   X1 --> X5
@@ -137,9 +143,15 @@ flowchart TD
   engine --> ui
 ```
 
-## 7. Open questions for PM
+## 7. Decisions & remaining questions
 
-1. Exact TipTip label format(s) needed — is `{row}-{n}` (e.g. `Q3-97`) the only convention, or do some events use `{row}{n}` / section prefixes? (drives wizard presets)
-2. Should the wizard optionally sync `seat_guid` for **new** plans (readable `Zone-Row-N` guids like pretix), behind a "new plan only" guard?
-3. Is multi-zone (multiple floors as separate zones) actually used in TipTip exports, or is everything flattened to one zone? ⚠ Inferred from samples: both files seen so far are single-zone.
-4. Priority call: is X3/X4 (authoring) truly needed before the next event setup, or does the NOW package (relabel existing pretix exports fast) cover the near-term workflow?
+Answered (June 2026):
+- **Label convention:** organizer-dependent, most common `{row}{n}` via seat_label `A%s` → wizard defaults to `{row}{n}` with presets for separators/sections. The pain is that pretix requires setting the template per row; the wizard applies it across all rows in one action.
+- **Guid sync:** not needed — TipTip uses each seat's UID as the identifier. The editor never rewrites `seat_guid`/`uuid`.
+- **Zones:** pretix-style zones unused in TipTip; single map, zone encoded in seat numbers when needed. Single-zone-first editor is fine.
+- **Sidebar pattern:** adopt pretix's context-sensitive panel (canvas / shape / text / row / seat) — see X2.
+
+Still open:
+1. **Does TipTip's importer tolerate unknown JSON fields** (e.g. `categories[].label` for display names)? Verify with one test upload; determines N9 storage (in-file vs sidecar).
+2. Per-show profiles in N9: how are shows identified (name + date is enough?), and is one exported file per show the right shape, or would a single combined export with a show picker at upload time be better?
+3. Priority call: is X3/X4 (authoring) needed before the next event setup, or does the NOW package (relabel pretix exports fast + show profiles) cover the near-term workflow?
