@@ -12,11 +12,11 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* The editor UI is light-only (white cards, gray surfaces). Without this,
+   OS dark mode flips --foreground to near-white and unstyled text becomes
+   invisible on the light surfaces. */
+html {
+  color-scheme: light;
 }
 
 body {
