@@ -2,94 +2,9 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 'use client';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Upload, Copy, RotateCcw, Save, Edit2, Check, X, Download, MousePointer, Grid3X3, Rows, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
-
-// Type definitions
-interface Position {
-  x: number;
-  y: number;
-}
-
-interface Size {
-  width: number;
-  height: number;
-}
-
-interface Rectangle {
-  width: number;
-  height: number;
-}
-
-interface TextContent {
-  text: string;
-  color: string;
-  size: number;
-  position?: Position;
-}
-
-interface Radius {
-  x: number;
-  y: number;
-}
-
-interface Ellipse {
-  radius: Radius;
-}
-
-interface Circle {
-  radius: number;
-}
-
-interface Polygon {
-  points: Position[];
-}
-
-interface Area {
-  uuid?: string;
-  shape: string;
-  position: Position;
-  color: string;
-  border_color: string;
-  rectangle?: Rectangle;
-  text?: TextContent;
-  rotation?: number;
-  ellipse?: Ellipse;
-  circle?: Circle;
-  polygon?: Polygon;
-}
-
-interface Seat {
-  seat_guid: string;
-  seat_number: string;
-  position: Position;
-  category: string;
-  status?: string;
-  radius?: number;
-}
-
-interface Row {
-  position: Position;
-  seats: Seat[];
-  row_number?: string;
-}
-
-interface Zone {
-  position: Position;
-  rows: Row[];
-  areas?: Area[];
-}
-
-interface Category {
-  name: string;
-  color: string;
-}
-
-interface SeatData {
-  name: string;
-  size: Size;
-  zones: Zone[];
-  categories: Category[];
-}
+import { Upload, Copy, RotateCcw, Save, Edit2, Check, X, Download, MousePointer, Grid3X3, Rows, ZoomIn, ZoomOut, Maximize, Undo2, Redo2, Wand2 } from 'lucide-react';
+import type { Position, Area, Seat, Row, Zone, Category, SeatData, ViewState, Bounds } from './types';
+import NumberingWizard, { NumberingResult } from './numbering-wizard';
 
 interface StatusConfig {
   outline: string;
@@ -103,17 +18,9 @@ interface SeatStats {
   sold: number;
 }
 
-interface ViewState {
-  scale: number;
-  x: number;
-  y: number;
-}
-
-interface Bounds {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+interface Toast {
+  message: string;
+  type: 'success' | 'error' | 'info';
 }
 
 // Define types for selected objects and selection mode
@@ -141,7 +48,59 @@ const SeatMapEditor: React.FC = () => {
   const [dragOffset, setDragOffset] = useState<Position | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+  const [showWizard, setShowWizard] = useState<boolean>(false);
+
+  // Toast notifications (replaces blocking alert())
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((message: string, type: Toast['type'] = 'success'): void => {
+    setToast({ message, type });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  // Undo / redo: snapshot stack. beginGesture() is called once before every
+  // mutation (or at the start of a drag), so one user action = one undo step.
+  const undoStackRef = useRef<SeatData[]>([]);
+  const redoStackRef = useRef<SeatData[]>([]);
+  const [historyVersion, setHistoryVersion] = useState<number>(0);
+  const HISTORY_LIMIT = 50;
+
+  const seatDataRef = useRef<SeatData | null>(null);
+  seatDataRef.current = seatData;
+
+  const beginGesture = useCallback((): void => {
+    const current = seatDataRef.current;
+    if (!current) return;
+    undoStackRef.current.push(structuredClone(current));
+    if (undoStackRef.current.length > HISTORY_LIMIT) undoStackRef.current.shift();
+    redoStackRef.current = [];
+    setHistoryVersion(v => v + 1);
+  }, []);
+
+  const undo = useCallback((): void => {
+    const current = seatDataRef.current;
+    if (!current || undoStackRef.current.length === 0) return;
+    redoStackRef.current.push(structuredClone(current));
+    setSeatData(undoStackRef.current.pop()!);
+    setSelectedSeats(new Set());
+    setSelectedObject(null);
+    setObjectProperties({});
+    setHistoryVersion(v => v + 1);
+  }, []);
+
+  const redo = useCallback((): void => {
+    const current = seatDataRef.current;
+    if (!current || redoStackRef.current.length === 0) return;
+    undoStackRef.current.push(structuredClone(current));
+    setSeatData(redoStackRef.current.pop()!);
+    setSelectedSeats(new Set());
+    setSelectedObject(null);
+    setObjectProperties({});
+    setHistoryVersion(v => v + 1);
+  }, []);
+
+
   // Performance optimizations
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const staticScaleRef = useRef<number>(1);
@@ -426,16 +385,19 @@ const SeatMapEditor: React.FC = () => {
           
           // Validate and fix data
           const { data: validatedData, fixedCount } = validateAndFixData(jsonData);
-          
+
           if (fixedCount > 0) {
-            alert(`Fixed ${fixedCount} duplicate seat IDs in the uploaded file.`);
+            showToast(`Fixed ${fixedCount} duplicate seat IDs in the uploaded file.`, 'info');
           }
-          
+
+          undoStackRef.current = [];
+          redoStackRef.current = [];
+          setHistoryVersion(v => v + 1);
           needsFitRef.current = true;
           setSeatData(validatedData);
           setSelectedSeats(new Set());
         } catch (error) {
-          alert('Invalid JSON file');
+          showToast('Invalid JSON file', 'error');
         }
       };
       reader.readAsText(file);
@@ -508,6 +470,7 @@ const SeatMapEditor: React.FC = () => {
         
         if (distance <= clickRadius) {
           // Start dragging the object
+          beginGesture();
           setIsDraggingObject(true);
           setDragOffset({ x: objectX - x, y: objectY - y });
           return;
@@ -544,6 +507,7 @@ const SeatMapEditor: React.FC = () => {
           const row = seatData.zones[object.zoneIndex].rows[object.rowIndex];
           const rowX = row.position.x + seatData.zones[object.zoneIndex].position.x;
           const rowY = row.position.y + seatData.zones[object.zoneIndex].position.y;
+          beginGesture();
           setIsDraggingObject(true);
           setDragOffset({ x: rowX - x, y: rowY - y });
         }
@@ -575,6 +539,7 @@ const SeatMapEditor: React.FC = () => {
             objectX = area.position.x + seatData.zones[object.zoneIndex].position.x;
             objectY = area.position.y + seatData.zones[object.zoneIndex].position.y;
           }
+          beginGesture();
           setIsDraggingObject(true);
           setDragOffset({ x: objectX - x, y: objectY - y });
         }
@@ -717,6 +682,7 @@ const SeatMapEditor: React.FC = () => {
   const updateSelectedSeatsStatus = (): void => {
     if (!seatData || selectedSeats.size === 0) return;
 
+    beginGesture();
     const updatedSeatData: SeatData = { ...seatData };
     
     updatedSeatData.zones.forEach((zone: Zone) => {
@@ -737,6 +703,7 @@ const SeatMapEditor: React.FC = () => {
   const updateSelectedSeatsCategory = (): void => {
     if (!seatData || selectedSeats.size === 0 || !currentCategory) return;
 
+    beginGesture();
     const updatedSeatData: SeatData = { ...seatData };
     
     updatedSeatData.zones.forEach((zone: Zone) => {
@@ -949,6 +916,49 @@ const SeatMapEditor: React.FC = () => {
         });
       });
     });
+
+    // Row labels at row ends (pretix-style, honoring row_number_position)
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '11px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    seatData.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        const pos = row.row_number_position;
+        if (!row.row_number || !pos || row.seats.length === 0) return;
+
+        // Extreme seats along the row's dominant axis
+        let first = row.seats[0];
+        let last = row.seats[0];
+        const xs = row.seats.map(s => s.position.x);
+        const ys = row.seats.map(s => s.position.y);
+        const axis: 'x' | 'y' = (Math.max(...ys) - Math.min(...ys)) > (Math.max(...xs) - Math.min(...xs)) ? 'y' : 'x';
+        row.seats.forEach(s => {
+          if (s.position[axis] < first.position[axis]) first = s;
+          if (s.position[axis] > last.position[axis]) last = s;
+        });
+
+        const baseX = zone.position.x + row.position.x;
+        const baseY = zone.position.y + row.position.y;
+        let dx = last.position.x - first.position.x;
+        let dy = last.position.y - first.position.y;
+        const len = Math.hypot(dx, dy);
+        if (len > 0) { dx /= len; dy /= len; } else { dx = 1; dy = 0; }
+        const offset = (first.radius || 8) + 14;
+
+        const drawLabel = (x: number, y: number): void => {
+          if (cull && (x < cull.x - 30 || x > cull.x + cull.w + 30 || y < cull.y - 30 || y > cull.y + cull.h + 30)) return;
+          ctx.fillText(row.row_number!, x, y);
+        };
+        if (pos === 'start' || pos === 'both') {
+          drawLabel(baseX + first.position.x - dx * offset, baseY + first.position.y - dy * offset);
+        }
+        if (pos === 'end' || pos === 'both') {
+          drawLabel(baseX + last.position.x + dx * offset, baseY + last.position.y + dy * offset);
+        }
+      });
+    });
+    ctx.textBaseline = 'alphabetic';
   }, [seatData, categoryMap]);
 
   // Render the cached content bitmap, sized to the content bounds within a
@@ -1125,6 +1135,7 @@ const SeatMapEditor: React.FC = () => {
   const updateCategoryName = (categoryId: string, newName: string): void => {
     if (!seatData || !newName.trim()) return;
 
+    beginGesture();
     const updatedSeatData: SeatData = { ...seatData };
     const categoryIndex = updatedSeatData.categories.findIndex((cat: Category) => cat.name === categoryId);
     
@@ -1552,7 +1563,8 @@ const SeatMapEditor: React.FC = () => {
   // Apply property changes
   const applyPropertyChanges = (): void => {
     if (!objectProperties || Object.keys(objectProperties).length === 0) return;
-    
+
+    beginGesture();
     Object.entries(objectProperties).forEach(([property, value]) => {
       updateObjectProperty(property, value);
     });
@@ -1576,6 +1588,12 @@ const SeatMapEditor: React.FC = () => {
 
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (isTyping(e)) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
       if (e.key === ' ') {
         e.preventDefault();
         setSpaceHeld(true);
@@ -1606,7 +1624,7 @@ const SeatMapEditor: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [fitToContent, resetZoom, zoomAtCenter]);
+  }, [fitToContent, resetZoom, zoomAtCenter, undo, redo]);
   
   // Handle key press events
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>): void => {
@@ -1624,9 +1642,9 @@ const SeatMapEditor: React.FC = () => {
     
     try {
       await navigator.clipboard.writeText(JSON.stringify(seatData, null, 2));
-      alert('✅ JSON successfully copied to clipboard!');
+      showToast('JSON copied to clipboard');
     } catch (error) {
-      alert('❌ Auto-copy failed. Please select all text manually and copy.');
+      showToast('Auto-copy failed — select all text manually and copy.', 'error');
     }
   };
 
@@ -1672,6 +1690,36 @@ const SeatMapEditor: React.FC = () => {
               ref={fileInputRef}
               className="hidden"
             />
+            {seatData && (
+              <div className="flex items-center border rounded-lg overflow-hidden">
+                <button
+                  onClick={undo}
+                  disabled={undoStackRef.current.length === 0}
+                  className="w-9 h-9 flex items-center justify-center hover:bg-gray-100 disabled:opacity-30"
+                  title="Undo (⌘Z)"
+                >
+                  <Undo2 className="w-4 h-4" />
+                </button>
+                <div className="w-px h-5 bg-gray-200" />
+                <button
+                  onClick={redo}
+                  disabled={redoStackRef.current.length === 0}
+                  className="w-9 h-9 flex items-center justify-center hover:bg-gray-100 disabled:opacity-30"
+                  title="Redo (⇧⌘Z)"
+                >
+                  <Redo2 className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+            {seatData && (
+              <button
+                onClick={() => setShowWizard(true)}
+                className="flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+              >
+                <Wand2 className="w-4 h-4 mr-2" />
+                Numbering
+              </button>
+            )}
             <button
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -1975,6 +2023,7 @@ const SeatMapEditor: React.FC = () => {
                       onKeyPress={(e) => {
                         if (e.key === 'Enter') {
                           if (editTitle.trim()) {
+                            beginGesture();
                             setSeatData({...seatData, name: editTitle.trim()});
                             setEditingTitle(false);
                           }
@@ -1984,6 +2033,7 @@ const SeatMapEditor: React.FC = () => {
                     <button
                       onClick={() => {
                         if (editTitle.trim()) {
+                          beginGesture();
                           setSeatData({...seatData, name: editTitle.trim()});
                           setEditingTitle(false);
                         }
@@ -2138,7 +2188,7 @@ const SeatMapEditor: React.FC = () => {
             <div className="p-4 border-t bg-gray-50">
               <div className="flex items-center justify-between text-sm text-gray-600">
                 <span>
-                  Lines: {JSON.stringify(seatData, null, 2).split('\n').length} | 
+                  Lines: {JSON.stringify(seatData, null, 2).split('\n').length} |
                   Characters: {JSON.stringify(seatData, null, 2).length.toLocaleString()}
                 </span>
                 <span className="text-blue-600 font-medium">
@@ -2147,6 +2197,36 @@ const SeatMapEditor: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Numbering & Labels wizard */}
+      {showWizard && seatData && (
+        <NumberingWizard
+          seatData={seatData}
+          selectedSeats={selectedSeats}
+          onClose={() => setShowWizard(false)}
+          onApply={(result: NumberingResult) => {
+            beginGesture();
+            setSeatData(result.next);
+            setSelectedSeats(new Set());
+            setShowWizard(false);
+            showToast(
+              `Applied numbering to ${result.rowsChanged} row(s), ${result.seatsChanged} seat(s).${result.warning ? ` ${result.warning}` : ''}`,
+              result.warning ? 'info' : 'success'
+            );
+          }}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] max-w-xl px-4 py-2.5 rounded-lg shadow-lg text-sm text-white ${
+            toast.type === 'error' ? 'bg-red-600' : toast.type === 'info' ? 'bg-gray-800' : 'bg-green-600'
+          }`}
+        >
+          {toast.message}
         </div>
       )}
     </div>

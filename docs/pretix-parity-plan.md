@@ -47,7 +47,7 @@
 | N8 | **Find seat / jump to** | Search by label or guid, pan-zoom to result. Invaluable on 4k-seat maps. | P2 | XS | 320 | Performance |
 | N9 | **Category ↔ ticket-UUID mapping (show profiles)** | Kills the second confirmed time sink. Keep a stable **display name** per category (e.g. "VIP", "CAT 1") and manage **per-show profiles**: paste each show's ticket UUIDs once → export a JSON per show with category `name` swapped to that show's UUIDs. Seats keep referencing the category; only the export rewrites names. Storage: prefer an extra field in the JSON (e.g. `categories[].label`) **if TipTip's importer tolerates unknown fields — verify with one test upload first**; fallback is a sidecar kept in localStorage keyed by plan name. | P0 | S–M | 540 | Performance |
 
-✅ Already shipped (June 2026): cursor-anchored zoom/pan, fit-to-content, HiDPI rendering, dark-mode text fix, typing-safe shortcuts.
+✅ Already shipped (June 2026): cursor-anchored zoom/pan, fit-to-content, HiDPI rendering, dark-mode text fix, typing-safe shortcuts — and from this list: **N1 numbering wizard, N2 row labels, N3 undo/redo (⌘Z/⇧⌘Z), N5 toasts** (verified against Opus Deccenium: 97 rows / 1,144 seats relabeled in one apply, undo restores).
 
 ---
 
@@ -79,6 +79,8 @@ Maps to the pretix toolbar: select / row-select / seat-grid / single-seat / shap
 | PDF/PNG export | Print-quality plan export. | P3 | M |
 | Multi-plan workspace / file versioning | Named saves, version history. | P3 | M |
 | TipTip Retool round-trip | Direct import/export against the Retool-managed store instead of manual JSON copy. ⚠ Needs TipTip API access — flag before building (tool standards / approval). | P3 | M–L |
+| **AI plan generation** | Upload a venue photo/map + spreadsheet (colors = categories) + ticket UUID list → AI drafts the seating JSON (zones, rows, curves, categories) for human cleanup in the editor. Editor-first foundation work (X1–X5) is a prerequisite so generated output is correctable. | P3 | XL |
+| **Embed in TipTip Content Hub (EO portal)** | Run the editor inside the creator portal: save plans directly to TipTip, live per-seat status (sold/unavailable) instead of manual JSON round-trips. Adopt the Content Hub design language (dark sidebar, TipTip red `#E61D54`-family accents, light content surfaces — see dashboard reference). ⚠ Product/eng dependency on TipTip platform team. | P3 | XL |
 
 ---
 
