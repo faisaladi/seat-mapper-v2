@@ -1,0 +1,291 @@
+'use client';
+import React, { useRef, useState } from 'react';
+import { Trash2 } from 'lucide-react';
+import type { SeatData, SelectedObject, Seat, Row, Area, Category } from './types';
+import type { RowLayout } from './model-ops';
+
+// Contextual properties panel (pretix-style): what it shows depends on the
+// current selection — plan / seats marquee / seat / row / area.
+
+export interface PanelCallbacks {
+  // seat + area fields route through the editor's updateObjectProperty
+  commitObjectProp: (prop: string, value: string | number) => void;
+  commitRowField: (field: 'row_number' | 'row_number_position', value: string) => void;
+  rowLayoutStart: () => void;
+  rowLayoutChange: (spacing: number, sagitta: number, gesture: boolean) => void;
+  rowBulk: (field: 'radius' | 'category', value: number | string) => void;
+  deleteSelection: () => void;
+}
+
+interface PropertiesPanelProps {
+  seatData: SeatData;
+  selectedObject: SelectedObject | null;
+  selectedSeats: Set<string>;
+  rowLayout: RowLayout | null;
+  callbacks: PanelCallbacks;
+}
+
+const fieldCls = 'w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg bg-white';
+const labelCls = 'block text-xs font-medium text-gray-500 mb-1';
+const sectionCls = 'text-sm font-semibold text-gray-800 pb-1 border-b';
+
+const TextField: React.FC<{ label: string; value: string; onCommit: (v: string) => void; mono?: boolean }> = ({ label, value, onCommit, mono }) => (
+  <div>
+    <label className={labelCls}>{label}</label>
+    <input
+      key={value}
+      type="text"
+      defaultValue={value}
+      onBlur={(e) => { if (e.target.value !== value) onCommit(e.target.value); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+      className={`${fieldCls} ${mono ? 'font-mono text-xs' : ''}`}
+    />
+  </div>
+);
+
+const NumberField: React.FC<{ label: string; value: number; onCommit: (v: number) => void; step?: number }> = ({ label, value, onCommit, step }) => {
+  const display = Math.round(value * 10) / 10;
+  return (
+    <div>
+      <label className={labelCls}>{label}</label>
+      <input
+        key={display}
+        type="number"
+        step={step ?? 1}
+        defaultValue={display}
+        onBlur={(e) => {
+          const v = parseFloat(e.target.value);
+          if (!isNaN(v) && Math.abs(v - display) > 0.01) onCommit(v);
+        }}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        className={fieldCls}
+      />
+    </div>
+  );
+};
+
+const SelectField: React.FC<{ label: string; value: string; options: { value: string; label: string }[]; onCommit: (v: string) => void }> = ({ label, value, options, onCommit }) => (
+  <div>
+    <label className={labelCls}>{label}</label>
+    <select value={value} onChange={(e) => onCommit(e.target.value)} className={fieldCls}>
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  </div>
+);
+
+const ColorField: React.FC<{ label: string; value: string; onCommit: (v: string) => void }> = ({ label, value, onCommit }) => (
+  <div>
+    <label className={labelCls}>{label}</label>
+    <div className="flex items-center space-x-2">
+      <input
+        key={value}
+        type="color"
+        defaultValue={/^#[0-9a-fA-F]{6}$/.test(value) ? value : '#cccccc'}
+        onBlur={(e) => { if (e.target.value !== value) onCommit(e.target.value); }}
+        className="w-9 h-8 border border-gray-300 rounded cursor-pointer"
+      />
+      <span className="text-xs font-mono text-gray-500">{value}</span>
+    </div>
+  </div>
+);
+
+const DeleteButton: React.FC<{ label: string; onClick: () => void }> = ({ label, onClick }) => (
+  <button
+    onClick={onClick}
+    className="w-full flex items-center justify-center px-3 py-2 text-sm bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
+  >
+    <Trash2 className="w-4 h-4 mr-2" />
+    {label}
+  </button>
+);
+
+const categoryOptions = (categories: Category[], extra?: { value: string; label: string }): { value: string; label: string }[] => {
+  const opts = categories.map(c => ({ value: c.name, label: c.label || c.name.slice(0, 18) + '…' }));
+  return extra ? [extra, ...opts] : opts;
+};
+
+const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObject, selectedSeats, rowLayout, callbacks }) => {
+  // Curve slider: live preview while dragging, single undo step (gesture
+  // starts on pointer-down, layout changes are applied without new gestures)
+  const dragSpacingRef = useRef<number>(25);
+  const [sliderValue, setSliderValue] = useState<number | null>(null);
+
+  const totalSeats = seatData.zones.reduce((acc, z) => acc + z.rows.reduce((a, r) => a + r.seats.length, 0), 0);
+
+  let content: React.ReactNode;
+
+  if (selectedObject?.type === 'row' && rowLayout) {
+    const row = selectedObject.data as Row;
+    const firstSeat = row.seats[0];
+    const rowCategories = new Set(row.seats.map(s => s.category));
+    const sharedCategory = rowCategories.size === 1 ? row.seats[0].category : '';
+    const sagitta = sliderValue ?? Math.round(rowLayout.sagitta);
+
+    content = (
+      <div className="space-y-3">
+        <div className={sectionCls}>Row · {row.seats.length} seats</div>
+        <TextField label="Row number" value={row.row_number || ''} onCommit={(v) => callbacks.commitRowField('row_number', v)} />
+        <SelectField
+          label="Row label"
+          value={row.row_number_position || ''}
+          options={[
+            { value: '', label: 'Hidden' },
+            { value: 'start', label: 'At start' },
+            { value: 'end', label: 'At end' },
+            { value: 'both', label: 'Both ends' },
+          ]}
+          onCommit={(v) => callbacks.commitRowField('row_number_position', v)}
+        />
+        <NumberField
+          label="Seat spacing"
+          value={rowLayout.spacing}
+          onCommit={(v) => callbacks.rowLayoutChange(Math.max(2, v), rowLayout.sagitta, true)}
+        />
+        <div>
+          <label className={labelCls}>Curve (drag to bend)</label>
+          <input
+            type="range"
+            min={-300}
+            max={300}
+            step={1}
+            value={sagitta}
+            onPointerDown={() => {
+              dragSpacingRef.current = rowLayout.spacing;
+              callbacks.rowLayoutStart();
+            }}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              setSliderValue(v);
+              callbacks.rowLayoutChange(dragSpacingRef.current, v, false);
+            }}
+            onPointerUp={() => setSliderValue(null)}
+            className="w-full accent-purple-600"
+          />
+          <div className="flex items-center justify-between">
+            <NumberField label="" value={rowLayout.sagitta} onCommit={(v) => callbacks.rowLayoutChange(rowLayout.spacing, v, true)} />
+            <button
+              onClick={() => callbacks.rowLayoutChange(rowLayout.spacing, 0, true)}
+              className="ml-2 mt-1 px-2 py-1.5 text-xs bg-gray-100 border rounded hover:bg-gray-200 whitespace-nowrap"
+            >
+              Straighten
+            </button>
+          </div>
+        </div>
+        <NumberField label="Seat radius (all seats)" value={firstSeat?.radius || 8} onCommit={(v) => callbacks.rowBulk('radius', Math.max(2, v))} />
+        <SelectField
+          label="Category (all seats)"
+          value={sharedCategory}
+          options={categoryOptions(seatData.categories, { value: '', label: rowCategories.size > 1 ? '(mixed)' : '(none)' })}
+          onCommit={(v) => { if (v) callbacks.rowBulk('category', v); }}
+        />
+        <DeleteButton label="Delete row" onClick={callbacks.deleteSelection} />
+      </div>
+    );
+  } else if (selectedObject?.type === 'seat') {
+    const seat = selectedObject.data as Seat;
+    content = (
+      <div className="space-y-3">
+        <div className={sectionCls}>Seat</div>
+        <TextField label="Seat number (label)" value={seat.seat_number} onCommit={(v) => callbacks.commitObjectProp('seat_number', v)} />
+        <div>
+          <label className={labelCls}>Seat ID</label>
+          <div className="text-xs font-mono text-gray-500 break-all">{seat.seat_guid}</div>
+        </div>
+        <SelectField
+          label="Status"
+          value={(seat.status || 'available').toLowerCase()}
+          options={['available', 'unavailable', 'void', 'sold'].map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }))}
+          onCommit={(v) => callbacks.commitObjectProp('status', v.toUpperCase())}
+        />
+        <SelectField
+          label="Category"
+          value={seat.category}
+          options={categoryOptions(seatData.categories, { value: '', label: '(none)' })}
+          onCommit={(v) => callbacks.commitObjectProp('category', v)}
+        />
+        <NumberField label="Radius" value={seat.radius || 8} onCommit={(v) => callbacks.commitObjectProp('radius', Math.max(2, v))} />
+        <div className="grid grid-cols-2 gap-2">
+          <NumberField label="X" value={seat.position.x} onCommit={(v) => callbacks.commitObjectProp('position_x', v)} />
+          <NumberField label="Y" value={seat.position.y} onCommit={(v) => callbacks.commitObjectProp('position_y', v)} />
+        </div>
+        <DeleteButton label="Delete seat" onClick={callbacks.deleteSelection} />
+      </div>
+    );
+  } else if (selectedObject?.type === 'area') {
+    const area = selectedObject.data as Area;
+    content = (
+      <div className="space-y-3">
+        <div className={sectionCls}>Shape · {area.shape}</div>
+        <div className="grid grid-cols-2 gap-2">
+          <NumberField label="X" value={area.position.x} onCommit={(v) => callbacks.commitObjectProp('position_x', v)} />
+          <NumberField label="Y" value={area.position.y} onCommit={(v) => callbacks.commitObjectProp('position_y', v)} />
+        </div>
+        {area.rectangle && (
+          <div className="grid grid-cols-2 gap-2">
+            <NumberField label="Width" value={area.rectangle.width} onCommit={(v) => callbacks.commitObjectProp('width', Math.max(1, v))} />
+            <NumberField label="Height" value={area.rectangle.height} onCommit={(v) => callbacks.commitObjectProp('height', Math.max(1, v))} />
+          </div>
+        )}
+        {area.circle && (
+          <NumberField label="Radius" value={area.circle.radius} onCommit={(v) => callbacks.commitObjectProp('radius', Math.max(1, v))} />
+        )}
+        {area.ellipse && (
+          <div className="grid grid-cols-2 gap-2">
+            <NumberField label="Radius X" value={area.ellipse.radius.x} onCommit={(v) => callbacks.commitObjectProp('radius_x', Math.max(1, v))} />
+            <NumberField label="Radius Y" value={area.ellipse.radius.y} onCommit={(v) => callbacks.commitObjectProp('radius_y', Math.max(1, v))} />
+          </div>
+        )}
+        <NumberField label="Rotation (°)" value={area.rotation || 0} onCommit={(v) => callbacks.commitObjectProp('rotation', v)} />
+        {area.shape !== 'text' && (
+          <div className="grid grid-cols-2 gap-2">
+            <ColorField label="Fill" value={area.color} onCommit={(v) => callbacks.commitObjectProp('color', v)} />
+            <ColorField label="Border" value={area.border_color} onCommit={(v) => callbacks.commitObjectProp('border_color', v)} />
+          </div>
+        )}
+        {area.text && (
+          <>
+            <TextField label="Text" value={area.text.text || ''} onCommit={(v) => callbacks.commitObjectProp('text', v)} />
+            <div className="grid grid-cols-2 gap-2">
+              <NumberField label="Text size" value={area.text.size || 16} onCommit={(v) => callbacks.commitObjectProp('text_size', Math.max(4, v))} />
+              <ColorField label="Text color" value={area.text.color || '#000000'} onCommit={(v) => callbacks.commitObjectProp('text_color', v)} />
+            </div>
+          </>
+        )}
+        <DeleteButton label="Delete shape" onClick={callbacks.deleteSelection} />
+      </div>
+    );
+  } else if (selectedSeats.size > 0) {
+    content = (
+      <div className="space-y-3">
+        <div className={sectionCls}>{selectedSeats.size} seats selected</div>
+        <p className="text-xs text-gray-500">
+          Use the left sidebar to update status, or a category card to assign. Arrow keys nudge the selection (⇧ = ×10).
+        </p>
+        <DeleteButton label={`Delete ${selectedSeats.size} seat(s)`} onClick={callbacks.deleteSelection} />
+      </div>
+    );
+  } else {
+    content = (
+      <div className="space-y-3">
+        <div className={sectionCls}>Plan</div>
+        <div className="text-sm text-gray-700 space-y-1.5">
+          <div className="flex justify-between"><span className="text-gray-500">Name</span><span className="font-medium text-right break-all">{seatData.name}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Canvas</span><span>{seatData.size?.width} × {seatData.size?.height}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Seats</span><span>{totalSeats}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Categories</span><span>{seatData.categories.length}</span></div>
+        </div>
+        <p className="text-xs text-gray-500">
+          Select a seat, row or shape to edit its properties. Use Insert in the left sidebar to add seats.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-72 bg-white border-l p-4 overflow-y-auto flex-shrink-0">
+      {content}
+    </div>
+  );
+};
+
+export default PropertiesPanel;

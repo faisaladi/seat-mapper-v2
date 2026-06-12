@@ -3,8 +3,20 @@
 'use client';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Upload, Copy, RotateCcw, Save, Edit2, Check, X, Download, MousePointer, Grid3X3, Rows, ZoomIn, ZoomOut, Maximize, Undo2, Redo2, Wand2 } from 'lucide-react';
-import type { Position, Area, Seat, Row, Zone, Category, SeatData, ViewState, Bounds } from './types';
+import type { Position, Area, Seat, Row, Zone, Category, SeatData, ViewState, Bounds, SelectedObject } from './types';
 import NumberingWizard, { NumberingResult } from './numbering-wizard';
+import PropertiesPanel from './properties-panel';
+import {
+  estimateRowLayout,
+  layoutRow,
+  insertSeatBlock,
+  deleteSeats,
+  deleteRowAt,
+  deleteAreaAt,
+  offsetSeats,
+  createBlankPlan,
+  InsertOptions,
+} from './model-ops';
 
 interface StatusConfig {
   outline: string;
@@ -23,9 +35,8 @@ interface Toast {
   type: 'success' | 'error' | 'info';
 }
 
-// Define types for selected objects and selection mode
+// Selection mode for the canvas
 type SelectionMode = 'area' | 'row' | 'object';
-type SelectedObject = { type: 'seat' | 'area' | 'row', id: string, data: Seat | Area | Row, zoneIndex: number, rowIndex?: number, seatIndex?: number, areaIndex?: number };
 
 const SeatMapEditor: React.FC = () => {
   const [seatData, setSeatData] = useState<SeatData | null>(null);
@@ -463,6 +474,21 @@ const SeatMapEditor: React.FC = () => {
     if (e.button !== 0) return;
 
     const { x, y } = screenToWorld(e.clientX, e.clientY);
+
+    // Armed insert tool: place the seat block at the click point
+    if (pendingInsert) {
+      beginGesture();
+      const next = structuredClone(seatData);
+      const added = insertSeatBlock(next, 0, { x, y }, {
+        ...pendingInsert,
+        category: seatData.categories[0]?.name || '',
+      });
+      setSeatData(next);
+      setPendingInsert(null);
+      const seatCount = added.reduce((a, r) => a + r.seats.length, 0);
+      showToast(`Added ${added.length} row(s), ${seatCount} seat(s)`);
+      return;
+    }
 
     if (selectionMode === 'area') {
       // Check if we're clicking on a selected object first
@@ -1607,22 +1633,161 @@ const SeatMapEditor: React.FC = () => {
     }
   };
   
-  // Handle property input change
-  const handlePropertyChange = (property: string, value: string): void => {
-    setObjectProperties(prev => ({
-      ...prev,
-      [property]: isNaN(Number(value)) ? value : Number(value)
-    }));
-  };
-  
-  // Apply property changes
-  const applyPropertyChanges = (): void => {
-    if (!objectProperties || Object.keys(objectProperties).length === 0) return;
+  // ===== Editor actions: properties panel, insert tools, delete, nudge =====
 
+  // Selection mirrored in refs so stable callbacks (keyboard) see fresh state
+  const selectedObjectRef = useRef<SelectedObject | null>(null);
+  selectedObjectRef.current = selectedObject;
+  const selectedSeatsRef = useRef<Set<string>>(selectedSeats);
+  selectedSeatsRef.current = selectedSeats;
+
+  const refreshRowSelection = (next: SeatData, zoneIndex: number, rowIndex: number): void => {
+    const row = next.zones[zoneIndex].rows[rowIndex];
+    setSelectedObject({ type: 'row', id: `row-${zoneIndex}-${rowIndex}`, data: row, zoneIndex, rowIndex });
+    setSelectedSeats(new Set(row.seats.map((s: Seat) => s.seat_guid)));
+  };
+
+  // Seat/area fields from the properties panel: one gesture per commit
+  const commitObjectProp = (prop: string, value: string | number): void => {
     beginGesture();
-    Object.entries(objectProperties).forEach(([property, value]) => {
-      updateObjectProperty(property, value);
+    updateObjectProperty(prop, value);
+  };
+
+  const commitRowField = (field: 'row_number' | 'row_number_position', value: string): void => {
+    if (!seatData || selectedObject?.type !== 'row' || selectedObject.rowIndex === undefined) return;
+    beginGesture();
+    const next = structuredClone(seatData);
+    const row = next.zones[selectedObject.zoneIndex].rows[selectedObject.rowIndex];
+    if (field === 'row_number') {
+      row.row_number = value;
+    } else if (value) {
+      row.row_number_position = value;
+    } else {
+      delete row.row_number_position;
+    }
+    setSeatData(next);
+    refreshRowSelection(next, selectedObject.zoneIndex, selectedObject.rowIndex);
+  };
+
+  // Spacing / curve. gesture=false during slider drags: the gesture was opened
+  // on pointer-down, so the whole drag is one undo step with live preview.
+  const rowLayoutChange = (spacing: number, sagitta: number, gesture: boolean): void => {
+    if (!seatData || selectedObject?.type !== 'row' || selectedObject.rowIndex === undefined) return;
+    if (gesture) beginGesture();
+    const next = structuredClone(seatData);
+    const row = next.zones[selectedObject.zoneIndex].rows[selectedObject.rowIndex];
+    layoutRow(row, spacing, sagitta);
+    setSeatData(next);
+    refreshRowSelection(next, selectedObject.zoneIndex, selectedObject.rowIndex);
+  };
+
+  const rowBulk = (field: 'radius' | 'category', value: number | string): void => {
+    if (!seatData || selectedObject?.type !== 'row' || selectedObject.rowIndex === undefined) return;
+    beginGesture();
+    const next = structuredClone(seatData);
+    const row = next.zones[selectedObject.zoneIndex].rows[selectedObject.rowIndex];
+    row.seats.forEach((s: Seat) => {
+      if (field === 'radius') s.radius = value as number;
+      else s.category = value as string;
     });
+    setSeatData(next);
+    refreshRowSelection(next, selectedObject.zoneIndex, selectedObject.rowIndex);
+  };
+
+  const selectedRowLayout = useMemo(() => {
+    if (selectedObject?.type === 'row') return estimateRowLayout(selectedObject.data as Row);
+    return null;
+  }, [selectedObject, seatData]);
+
+  const deleteSelection = useCallback((): void => {
+    const data = seatDataRef.current;
+    if (!data) return;
+    const sel = selectedObjectRef.current;
+    const seats = selectedSeatsRef.current;
+
+    if (sel?.type === 'row' && sel.rowIndex !== undefined) {
+      beginGesture();
+      const next = structuredClone(data);
+      const count = deleteRowAt(next, sel.zoneIndex, sel.rowIndex);
+      setSeatData(next);
+      showToast(`Deleted row (${count} seats)`);
+    } else if (sel?.type === 'area' && sel.areaIndex !== undefined) {
+      beginGesture();
+      const next = structuredClone(data);
+      deleteAreaAt(next, sel.zoneIndex, sel.areaIndex);
+      setSeatData(next);
+      showToast('Deleted shape');
+    } else if (sel?.type === 'seat') {
+      beginGesture();
+      const next = structuredClone(data);
+      deleteSeats(next, new Set([sel.id]));
+      setSeatData(next);
+      showToast('Deleted seat');
+    } else if (seats.size > 0) {
+      beginGesture();
+      const next = structuredClone(data);
+      const removed = deleteSeats(next, seats);
+      setSeatData(next);
+      showToast(`Deleted ${removed} seat(s)`);
+    } else {
+      return;
+    }
+    setSelectedObject(null);
+    setSelectedSeats(new Set());
+    setObjectProperties({});
+  }, [beginGesture, showToast]);
+
+  // Arrow-key nudge; rapid presses share one undo step
+  const nudgeGestureAtRef = useRef<number>(0);
+  const nudgeSelection = useCallback((dx: number, dy: number): void => {
+    const data = seatDataRef.current;
+    if (!data) return;
+    const sel = selectedObjectRef.current;
+    const seats = selectedSeatsRef.current;
+    if (!sel && seats.size === 0) return;
+
+    const now = Date.now();
+    if (now - nudgeGestureAtRef.current > 800) beginGesture();
+    nudgeGestureAtRef.current = now;
+
+    const next = structuredClone(data);
+    if (sel?.type === 'row' && sel.rowIndex !== undefined) {
+      const row = next.zones[sel.zoneIndex].rows[sel.rowIndex];
+      row.position.x += dx;
+      row.position.y += dy;
+      setSeatData(next);
+      setSelectedObject({ ...sel, data: row });
+    } else if (sel?.type === 'area' && sel.areaIndex !== undefined && next.zones[sel.zoneIndex].areas) {
+      const area = next.zones[sel.zoneIndex].areas![sel.areaIndex];
+      area.position.x += dx;
+      area.position.y += dy;
+      setSeatData(next);
+      setSelectedObject({ ...sel, data: area });
+    } else if (sel?.type === 'seat' && sel.rowIndex !== undefined && sel.seatIndex !== undefined) {
+      const seat = next.zones[sel.zoneIndex].rows[sel.rowIndex].seats[sel.seatIndex];
+      seat.position.x += dx;
+      seat.position.y += dy;
+      setSeatData(next);
+      setSelectedObject({ ...sel, data: seat });
+    } else if (seats.size > 0) {
+      offsetSeats(next, seats, dx, dy);
+      setSeatData(next);
+    }
+  }, [beginGesture]);
+
+  // Insert tools: arm with options, then click the canvas to place
+  const [pendingInsert, setPendingInsert] = useState<(InsertOptions & { kind: 'row' | 'grid' }) | null>(null);
+  const [insertForm, setInsertForm] = useState({ rows: 5, seatsPerRow: 10, spacing: 28, rowSpacing: 28, radius: 10 });
+
+  const startBlankPlan = (): void => {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setHistoryVersion(v => v + 1);
+    needsFitRef.current = true;
+    setSeatData(createBlankPlan());
+    setSelectedSeats(new Set());
+    setSelectedObject(null);
+    showToast('Blank plan created — use Insert to add seats', 'info');
   };
   
   // Toggle selection mode
@@ -1666,6 +1831,20 @@ const SeatMapEditor: React.FC = () => {
         zoomAtCenter(1.25);
       } else if (e.key === '-' || e.key === '_') {
         zoomAtCenter(0.8);
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        deleteSelection();
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        nudgeSelection(dx, dy);
+      } else if (e.key === 'Escape') {
+        setPendingInsert(null);
+        setSelectedSeats(new Set());
+        setSelectedObject(null);
+        setObjectProperties({});
       }
     };
 
@@ -1679,7 +1858,7 @@ const SeatMapEditor: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [fitToContent, resetZoom, zoomAtCenter, undo, redo]);
+  }, [fitToContent, resetZoom, zoomAtCenter, undo, redo, deleteSelection, nudgeSelection]);
   
   // Handle key press events
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>): void => {
@@ -1854,37 +2033,52 @@ const SeatMapEditor: React.FC = () => {
               </div>
             </div>
             
-            {/* Object Properties */}
-            {(selectionMode === 'object' || selectionMode === 'row') && selectedObject && (
-              <div className="mb-4">
-                <h3 className="text-lg font-semibold mb-3">Object Properties</h3>
-                <div className="space-y-3 border rounded-lg p-3">
-                  <div className="text-sm font-medium text-gray-700">
-                    Type: {selectedObject.type.charAt(0).toUpperCase() + selectedObject.type.slice(1)}
+            {/* Insert tools */}
+            {seatData && (
+              <div>
+                <h3 className="text-lg font-semibold mb-3">Insert</h3>
+                {pendingInsert ? (
+                  <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg text-sm text-purple-700">
+                    Click on the canvas to place · Esc to cancel
                   </div>
-                  
-                  {Object.entries(objectProperties).map(([property, value]) => (
-                    <div key={property} className="grid grid-cols-3 gap-2 items-center">
-                      <label className="text-sm font-medium text-gray-700 col-span-1 capitalize">
-                        {property.replace('_', ' ')}:
-                      </label>
-                      <input
-                        type={typeof value === 'number' ? 'number' : 'text'}
-                        value={value != null ? value.toString() : ''}
-                        onChange={(e) => handlePropertyChange(property, e.target.value)}
-                        className="col-span-2 px-2 py-1 text-sm border rounded"
-                      />
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        ['rows', 'Rows'],
+                        ['seatsPerRow', 'Seats / row'],
+                        ['spacing', 'Seat spacing'],
+                        ['rowSpacing', 'Row spacing'],
+                        ['radius', 'Seat radius'],
+                      ] as [keyof typeof insertForm, string][]).map(([key, label]) => (
+                        <div key={key}>
+                          <label className="block text-xs font-medium text-gray-500 mb-0.5">{label}</label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={insertForm[key]}
+                            onChange={(e) => setInsertForm(prev => ({ ...prev, [key]: Math.max(1, parseInt(e.target.value, 10) || 1) }))}
+                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                          />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                  
-                  <button
-                    onClick={applyPropertyChanges}
-                    className="w-full mt-2 flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    <Save className="w-4 h-4 mr-2" />
-                    Apply Changes
-                  </button>
-                </div>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => setPendingInsert({ ...insertForm, rows: 1, kind: 'row', category: '' })}
+                        className="flex-1 px-2 py-2 text-sm bg-gray-100 border rounded-lg hover:bg-gray-200"
+                      >
+                        + Row
+                      </button>
+                      <button
+                        onClick={() => setPendingInsert({ ...insertForm, kind: 'grid', category: '' })}
+                        className="flex-1 px-2 py-2 text-sm bg-gray-100 border rounded-lg hover:bg-gray-200"
+                      >
+                        + Grid
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             
@@ -2112,7 +2306,7 @@ const SeatMapEditor: React.FC = () => {
                 <canvas
                   ref={canvasRef}
                   className={`absolute inset-0 ${
-                    isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'
+                    pendingInsert ? 'cursor-copy' : isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'
                   }`}
                   onMouseDown={handleMouseDown}
                   onMouseMove={handleMouseMove}
@@ -2163,16 +2357,42 @@ const SeatMapEditor: React.FC = () => {
                 <p className="text-gray-500 mb-4">
                   Upload a JSON file to start editing seat statuses
                 </p>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Upload JSON File
-                </button>
+                <div className="flex items-center justify-center space-x-3">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    Upload JSON File
+                  </button>
+                  <button
+                    onClick={startBlankPlan}
+                    className="px-6 py-3 bg-white text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
+                  >
+                    Start Blank Plan
+                  </button>
+                </div>
               </div>
             </div>
           )}
         </div>
+
+        {/* Contextual properties panel (pretix-style) */}
+        {seatData && (
+          <PropertiesPanel
+            seatData={seatData}
+            selectedObject={selectedObject}
+            selectedSeats={selectedSeats}
+            rowLayout={selectedRowLayout}
+            callbacks={{
+              commitObjectProp,
+              commitRowField,
+              rowLayoutStart: beginGesture,
+              rowLayoutChange,
+              rowBulk,
+              deleteSelection,
+            }}
+          />
+        )}
       </div>
 
       {/* JSON Output Modal */}
