@@ -45,7 +45,7 @@
 | N6 | **Autosave + recent files** | Persist working copy to localStorage/IndexedDB, restore on reload, warn before closing with unsaved changes. Drag-and-drop JSON onto the window to open. | P1 | S | 504 | Basic |
 | N7 | **Status paint mode** | Pick a status, then click/drag across seats to apply directly — faster than select → dropdown → update for scattered seats. | P2 | S | 392 | Performance |
 | N8 | **Find seat / jump to** | Search by label or guid, pan-zoom to result. Invaluable on 4k-seat maps. | P2 | XS | 320 | Performance |
-| N9 | **Category ↔ ticket-UUID mapping (show profiles)** | Kills the second confirmed time sink. Keep a stable **display name** per category (e.g. "VIP", "CAT 1") and manage **per-show profiles**: paste each show's ticket UUIDs once → export a JSON per show with category `name` swapped to that show's UUIDs. Seats keep referencing the category; only the export rewrites names. Storage: prefer an extra field in the JSON (e.g. `categories[].label`) **if TipTip's importer tolerates unknown fields — verify with one test upload first**; fallback is a sidecar kept in localStorage keyed by plan name. | P0 | S–M | 540 | Performance |
+| N9 | **Category display alias** ✅ shipped | Simplified after PM answers: TipTip's importer tolerates extra fields, and no show profiles are needed — just a stable `categories[].label` alias inside the JSON. The Categories panel edits the alias inline (with per-category seat counts); the UUID `name` is swapped per show via the existing rename (which repoints all seats and now preserves the alias). Later, the TipTip Content Hub connection owns event/show info. | P0 | S | 540 | Performance |
 
 ✅ Already shipped (June 2026): cursor-anchored zoom/pan, fit-to-content, HiDPI rendering, dark-mode text fix, typing-safe shortcuts — and from this list: **N1 numbering wizard, N2 row labels, N3 undo/redo (⌘Z/⇧⌘Z), N5 toasts** (verified against Opus Deccenium: 97 rows / 1,144 seats relabeled in one apply, undo restores).
 
@@ -153,7 +153,8 @@ Answered (June 2026):
 - **Zones:** pretix-style zones unused in TipTip; single map, zone encoded in seat numbers when needed. Single-zone-first editor is fine.
 - **Sidebar pattern:** adopt pretix's context-sensitive panel (canvas / shape / text / row / seat) — see X2.
 
-Still open:
-1. **Does TipTip's importer tolerate unknown JSON fields** (e.g. `categories[].label` for display names)? Verify with one test upload; determines N9 storage (in-file vs sidecar).
-2. Per-show profiles in N9: how are shows identified (name + date is enough?), and is one exported file per show the right shape, or would a single combined export with a show picker at upload time be better?
-3. Priority call: is X3/X4 (authoring) needed before the next event setup, or does the NOW package (relabel pretix exports fast + show profiles) cover the near-term workflow?
+Also answered (June 2026):
+- **TipTip importer tolerates unknown JSON fields** → `categories[].label` alias lives in-file (N9 shipped this way).
+- **No show profiles needed** — the alias alone covers it; event/show information becomes TipTip's job once the Content Hub connection exists.
+- **X3/X4 authoring confirmed must-have** for the editor phase.
+- Wizard UI feedback: works, but the layout isn't final — restructure it into the contextual sidebar when X2 lands.

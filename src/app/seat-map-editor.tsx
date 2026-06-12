@@ -114,6 +114,19 @@ const SeatMapEditor: React.FC = () => {
     return map;
   }, [seatData?.categories]);
 
+  // Seats per category
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    seatData?.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        row.seats.forEach((seat: Seat) => {
+          counts.set(seat.category, (counts.get(seat.category) || 0) + 1);
+        });
+      });
+    });
+    return counts;
+  }, [seatData]);
+
   // Content bounding box + absolute seat positions, recomputed when data changes.
   // The bounds drive fit-to-content and the static layer size, so the view hugs
   // the actual seats/areas instead of the (often oversized) JSON `size` field.
@@ -1141,12 +1154,12 @@ const SeatMapEditor: React.FC = () => {
     
     if (categoryIndex !== -1) {
       const oldName = updatedSeatData.categories[categoryIndex].name;
-      const categoryColor = updatedSeatData.categories[categoryIndex].color;
-      
-      // Update category name while preserving color
+
+      // Update the name (ticket UUID) while preserving color, label and any
+      // other fields — the alias must survive per-show UUID swaps
       updatedSeatData.categories[categoryIndex] = {
-        name: newName.trim(),
-        color: categoryColor
+        ...updatedSeatData.categories[categoryIndex],
+        name: newName.trim()
       };
       
       // Update all seats that reference this category
@@ -1164,6 +1177,24 @@ const SeatMapEditor: React.FC = () => {
     setSeatData(updatedSeatData);
     setEditingCategory(null);
     setEditCategoryName('');
+  };
+
+  // Update category display alias (stored as categories[].label inside the
+  // JSON — TipTip's importer tolerates the extra field, so the readable name
+  // survives the per-show ticket-UUID swap of `name`)
+  const updateCategoryLabel = (categoryName: string, label: string): void => {
+    if (!seatData) return;
+    const trimmed = label.trim();
+    const idx = seatData.categories.findIndex((c: Category) => c.name === categoryName);
+    if (idx === -1) return;
+    if ((seatData.categories[idx].label || '') === trimmed) return;
+    beginGesture();
+    setSeatData({
+      ...seatData,
+      categories: seatData.categories.map((c: Category, i: number) =>
+        i === idx ? { ...c, label: trimmed || undefined } : c
+      ),
+    });
   };
 
   // Start editing category
@@ -1897,7 +1928,7 @@ const SeatMapEditor: React.FC = () => {
                         className="w-4 h-4 rounded-full border border-gray-300"
                         style={{ backgroundColor: category.color }}
                       />
-                      <span className="text-sm truncate">{category.name}</span>
+                      <span className="text-sm truncate">{category.label || category.name}</span>
                     </div>
                   ))}
                 </div>
@@ -1958,20 +1989,39 @@ const SeatMapEditor: React.FC = () => {
             {seatData?.categories && (
               <div>
                 <h3 className="text-lg font-semibold mb-3">Categories</h3>
+                <p className="text-xs text-gray-500 mb-2">
+                  Display name is stored in the file and survives ticket-UUID changes. The UUID below it is what TipTip reads — swap it per show.
+                </p>
                 <div className="space-y-3">
                   {seatData.categories.map((category: Category, idx: number) => (
-                    <div key={idx} className="flex items-center space-x-3 p-2 border rounded-lg">
-                      <div
-                        className="w-6 h-6 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: category.color }}
-                      />
+                    <div key={idx} className="p-2 border rounded-lg space-y-1.5">
+                      <div className="flex items-center space-x-2">
+                        <div
+                          className="w-5 h-5 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: category.color }}
+                        />
+                        <input
+                          key={`${category.name}:${category.label ?? ''}`}
+                          type="text"
+                          defaultValue={category.label ?? ''}
+                          placeholder="Display name (e.g. VIP)…"
+                          onBlur={(e) => updateCategoryLabel(category.name, e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                          }}
+                          className="flex-1 min-w-0 px-2 py-1 text-sm font-medium border border-transparent hover:border-gray-300 focus:border-blue-400 rounded outline-none"
+                        />
+                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                          {categoryCounts.get(category.name) || 0} seats
+                        </span>
+                      </div>
                       {editingCategory === category.name ? (
-                        <div className="flex-1 flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 pl-7">
                           <input
                             type="text"
                             value={editCategoryName}
                             onChange={(e) => setEditCategoryName(e.target.value)}
-                            className="flex-1 px-2 py-1 text-sm border rounded"
+                            className="flex-1 min-w-0 px-2 py-1 text-xs font-mono border rounded"
                             autoFocus
                             onKeyPress={handleKeyPress}
                           />
@@ -1989,11 +2039,14 @@ const SeatMapEditor: React.FC = () => {
                           </button>
                         </div>
                       ) : (
-                        <div className="flex-1 flex items-center justify-between">
-                          <span className="text-sm font-mono break-all">{category.name}</span>
+                        <div className="flex items-center justify-between pl-7">
+                          <span className="text-xs font-mono text-gray-500 break-all" title="Ticket UUID (category name read by TipTip)">
+                            {category.name}
+                          </span>
                           <button
                             onClick={() => startEditingCategory(category.name, category.name)}
-                            className="p-1 text-blue-600 hover:bg-blue-100 rounded ml-2"
+                            className="p-1 text-blue-600 hover:bg-blue-100 rounded ml-2 flex-shrink-0"
+                            title="Edit ticket UUID"
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>

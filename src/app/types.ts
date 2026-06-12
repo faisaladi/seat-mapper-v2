@@ -85,9 +85,14 @@ export interface Zone {
   areas?: Area[];
 }
 
+// `name` is what TipTip consumes — the ticket UUID of the target show.
+// `label` is our human-readable alias; TipTip's importer tolerates the extra
+// field (verified June 2026), so it travels inside the JSON and survives the
+// per-show UUID swap.
 export interface Category {
   name: string;
   color: string;
+  label?: string;
 }
 
 export interface SeatData {
