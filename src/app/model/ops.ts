@@ -2,7 +2,7 @@
 // new SeatData (callers wrap with beginGesture + setSeatData) or mutates a
 // row/seat in place on an already-cloned object.
 
-import type { SeatData, Zone, Row, Seat, Position } from './types';
+import type { SeatData, Zone, Row, Seat, Area, Position } from './types';
 
 // Seats ordered along the row's dominant axis (ascending = left-to-right).
 // Shared by numbering, row layout and row-label rendering.
@@ -307,6 +307,48 @@ export const curveSeats = (data: SeatData, guids: Set<string>, sagitta: number):
     const ang = a0 + dir * 2 * half * (i / (n - 1));
     place(r, cx + R * Math.cos(ang), cy + R * Math.sin(ang));
   });
+};
+
+// ===== Area (shape) factories — coordinates are zone-relative =====
+// Defaults match the pretix look: soft fill + saturated border.
+
+export type ShapeKind = 'rectangle' | 'ellipse' | 'text';
+
+export const makeRectArea = (x: number, y: number, w: number, h: number): Area => ({
+  uuid: crypto.randomUUID(),
+  shape: 'rectangle',
+  position: { x, y },
+  color: '#dbeafe',
+  border_color: '#3b82f6',
+  rectangle: { width: w, height: h },
+});
+
+export const makeEllipseArea = (cx: number, cy: number, rx: number, ry: number): Area => ({
+  uuid: crypto.randomUUID(),
+  shape: 'ellipse',
+  position: { x: cx, y: cy },
+  color: '#fee2e2',
+  border_color: '#ef4444',
+  ellipse: { radius: { x: rx, y: ry } },
+  rotation: 0,
+});
+
+export const makeTextArea = (x: number, y: number, text = 'Label'): Area => ({
+  uuid: crypto.randomUUID(),
+  shape: 'text',
+  position: { x, y },
+  color: '#111827',
+  border_color: '#111827',
+  text: { text, color: '#111827', size: 24 },
+  rotation: 0,
+});
+
+// Append an area to a zone (creating the array if needed). Returns its index.
+export const addArea = (data: SeatData, zoneIndex: number, area: Area): number => {
+  const zone = data.zones[zoneIndex];
+  if (!zone.areas) zone.areas = [];
+  zone.areas.push(area);
+  return zone.areas.length - 1;
 };
 
 // A minimal valid plan for starting from scratch (single zone, TipTip-style)

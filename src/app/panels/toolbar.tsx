@@ -1,11 +1,12 @@
 'use client';
 import React from 'react';
-import { Upload, Copy, MousePointer, Grid3X3, Rows, Undo2, Redo2, Wand2, Move, Armchair, FilePlus } from 'lucide-react';
+import { Upload, Copy, MousePointer, Grid3X3, Rows, Undo2, Redo2, Wand2, Move, Armchair, FilePlus, Square, Circle, Type } from 'lucide-react';
 
-// Top toolbar: selection modes, move toggle, insert/numbering tools,
+// Top toolbar: selection modes, move toggle, insert/shape/numbering tools,
 // undo/redo, and the file actions (new / upload / export).
 
 export type SelectionMode = 'area' | 'row' | 'object';
+export type ShapeKind = 'rectangle' | 'ellipse' | 'text';
 
 interface ToolbarProps {
   hasData: boolean;
@@ -14,6 +15,8 @@ interface ToolbarProps {
   isMoveEnabled: boolean;
   onToggleMove: () => void;
   onInsert: () => void;
+  onShape: (shape: ShapeKind) => void;
+  activeShape: ShapeKind | null;
   onWizard: () => void;
   undo: () => void;
   redo: () => void;
@@ -38,6 +41,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
   isMoveEnabled,
   onToggleMove,
   onInsert,
+  onShape,
+  activeShape,
   onWizard,
   undo,
   redo,
@@ -67,6 +72,15 @@ const Toolbar: React.FC<ToolbarProps> = ({
         <div className="w-px h-6 bg-gray-200 mx-1" />
         <button onClick={onInsert} className={toolCls(false)} title="Insert seat block">
           <Armchair className="w-4 h-4" />
+        </button>
+        <button onClick={() => onShape('rectangle')} className={toolCls(activeShape === 'rectangle', 'purple')} title="Draw rectangle (stage / section)">
+          <Square className="w-4 h-4" />
+        </button>
+        <button onClick={() => onShape('ellipse')} className={toolCls(activeShape === 'ellipse', 'purple')} title="Draw ellipse">
+          <Circle className="w-4 h-4" />
+        </button>
+        <button onClick={() => onShape('text')} className={toolCls(activeShape === 'text', 'purple')} title="Add text label">
+          <Type className="w-4 h-4" />
         </button>
         <button onClick={onWizard} className={toolCls(false)} title="Numbering & labels">
           <Wand2 className="w-4 h-4" />

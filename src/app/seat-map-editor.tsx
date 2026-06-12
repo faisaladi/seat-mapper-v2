@@ -6,10 +6,9 @@ import { Upload, ZoomIn, ZoomOut, Maximize, History } from 'lucide-react';
 import type { Position, Area, Seat, Row, Zone, Category, SeatData, Bounds, SelectedObject } from './model/types';
 import NumberingWizard, { NumberingResult } from './panels/numbering-wizard';
 import PropertiesPanel from './panels/properties-panel';
-import Toolbar, { SelectionMode } from './panels/toolbar';
+import Toolbar, { SelectionMode, ShapeKind } from './panels/toolbar';
 import NewPlanModal from './panels/new-plan-modal';
 import InsertModal from './panels/insert-modal';
-import JsonOutputModal from './panels/json-output-modal';
 import {
   estimateRowLayout,
   layoutRow,
@@ -20,6 +19,10 @@ import {
   offsetSeats,
   createBlankPlan,
   curveSeats,
+  makeRectArea,
+  makeEllipseArea,
+  makeTextArea,
+  addArea,
   InsertOptions,
 } from './model/ops';
 import { computeContentMetrics } from './model/metrics';
@@ -55,7 +58,6 @@ const SeatMapEditor: React.FC = () => {
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
   const [objectProperties, setObjectProperties] = useState<Record<string, string | number>>({});
   const [isMoveEnabled, setIsMoveEnabled] = useState<boolean>(false);
-  const [showOutput, setShowOutput] = useState<boolean>(false);
   const [showInsertModal, setShowInsertModal] = useState<boolean>(false);
   const [isDraggingObject, setIsDraggingObject] = useState<boolean>(false);
   const [dragOffset, setDragOffset] = useState<Position | null>(null);
@@ -63,6 +65,14 @@ const SeatMapEditor: React.FC = () => {
   // original box is captured at mousedown so opposite-corner math is stable.
   const resizeRef = useRef<{ handle: HandleId; box: TransformBox; zoneIndex: number; areaIndex: number; uniform: boolean } | null>(null);
   const [hoverCursor, setHoverCursor] = useState<string | null>(null);
+  // Shape drawing (X5): an armed tool, plus the live drag rubber-band. The
+  // draft is mirrored in a ref so the synchronous mousedown→move→up handlers
+  // read it without waiting for a re-render; state drives the preview redraw.
+  const [pendingShape, setPendingShape] = useState<ShapeKind | null>(null);
+  const [shapeDraft, setShapeDraft] = useState<{ start: Position; end: Position } | null>(null);
+  const shapeDraftRef = useRef<{ start: Position; end: Position } | null>(null);
+  const pendingShapeRef = useRef<ShapeKind | null>(null);
+  pendingShapeRef.current = pendingShape;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showWizard, setShowWizard] = useState<boolean>(false);
@@ -334,6 +344,28 @@ const SeatMapEditor: React.FC = () => {
       return;
     }
 
+    // Armed shape tool: text places immediately; rect/ellipse drag to size
+    if (pendingShape) {
+      if (pendingShape === 'text') {
+        beginGesture();
+        const next = structuredClone(seatData);
+        const zone = next.zones[0];
+        const area = makeTextArea(x - zone.position.x, y - zone.position.y);
+        const idx = addArea(next, 0, area);
+        setSeatData(next);
+        setPendingShape(null);
+        setSelectionMode('object');
+        setSelectedObject({ type: 'area', id: area.uuid!, data: area, zoneIndex: 0, areaIndex: idx });
+        setSelectedSeats(new Set());
+        showToast('Text added — edit it in the panel');
+      } else {
+        const draft = { start: { x, y }, end: { x, y } };
+        shapeDraftRef.current = draft;
+        setShapeDraft(draft);
+      }
+      return;
+    }
+
     // Grab a resize handle of the selected shape (takes priority over move/select)
     if (selectedObject?.type === 'area' && selectedObject.areaIndex !== undefined) {
       const zone = seatData.zones[selectedObject.zoneIndex];
@@ -476,6 +508,15 @@ const SeatMapEditor: React.FC = () => {
 
     const { x, y } = screenToWorld(e.clientX, e.clientY);
 
+    // Drawing a shape: extend the rubber-band
+    if (shapeDraftRef.current) {
+      const draft = { start: shapeDraftRef.current.start, end: { x, y } };
+      shapeDraftRef.current = draft;
+      setShapeDraft(draft);
+      requestRedraw();
+      return;
+    }
+
     // Active resize gesture: recompute the box from the captured original
     if (resizeRef.current) {
       const { handle, box, zoneIndex, areaIndex, uniform } = resizeRef.current;
@@ -583,6 +624,37 @@ const SeatMapEditor: React.FC = () => {
     if (panLastRef.current) {
       panLastRef.current = null;
       setIsPanning(false);
+    }
+    // Commit a drawn shape (rect / ellipse). A tiny drag uses a default size.
+    if (shapeDraftRef.current && pendingShapeRef.current && seatData) {
+      const pendingShape = pendingShapeRef.current;
+      const { start, end } = shapeDraftRef.current;
+      const minX = Math.min(start.x, end.x);
+      const minY = Math.min(start.y, end.y);
+      let w = Math.abs(end.x - start.x);
+      let h = Math.abs(end.y - start.y);
+      if (w < 6 && h < 6) { w = 160; h = 90; } // click, not drag → default block
+      beginGesture();
+      const next = structuredClone(seatData);
+      const zone = next.zones[0];
+      const zx = zone.position.x;
+      const zy = zone.position.y;
+      let area;
+      if (pendingShape === 'rectangle') {
+        area = makeRectArea(minX - zx, minY - zy, w, h);
+      } else {
+        area = makeEllipseArea(minX + w / 2 - zx, minY + h / 2 - zy, w / 2, h / 2);
+      }
+      const idx = addArea(next, 0, area);
+      setSeatData(next);
+      shapeDraftRef.current = null;
+      setShapeDraft(null);
+      setPendingShape(null);
+      setSelectionMode('object');
+      setSelectedObject({ type: 'area', id: area.uuid!, data: area, zoneIndex: 0, areaIndex: idx });
+      setSelectedSeats(new Set());
+      showToast(`Added ${pendingShape}`);
+      return;
     }
     if (resizeRef.current && selectedObject) {
       // Sync the panel's dimension fields to the resized shape
@@ -849,8 +921,31 @@ const SeatMapEditor: React.FC = () => {
       ctx.setLineDash([]);
     }
 
+    // Draw the shape rubber-band while drawing a new rect/ellipse
+    if (shapeDraft && pendingShape) {
+      const { start, end } = shapeDraft;
+      const rx = Math.min(start.x, end.x);
+      const ry = Math.min(start.y, end.y);
+      const rw = Math.abs(end.x - start.x);
+      const rh = Math.abs(end.y - start.y);
+      ctx.fillStyle = 'rgba(139, 92, 246, 0.12)';
+      ctx.strokeStyle = '#8b5cf6';
+      ctx.lineWidth = 1.5 / view.scale;
+      ctx.setLineDash([6 / view.scale, 4 / view.scale]);
+      if (pendingShape === 'ellipse') {
+        ctx.beginPath();
+        ctx.ellipse(rx + rw / 2, ry + rh / 2, rw / 2, rh / 2, 0, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.fillRect(rx, ry, rw, rh);
+        ctx.strokeRect(rx, ry, rw, rh);
+      }
+      ctx.setLineDash([]);
+    }
+
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-  }, [seatData, contentMetrics, paintContent, selectedSeats, isDragging, dragStart, dragEnd, selectedObject]);
+  }, [seatData, contentMetrics, paintContent, selectedSeats, isDragging, dragStart, dragEnd, selectedObject, shapeDraft, pendingShape]);
 
   // Keep the rAF loop pointed at the latest draw closure; redraw on state changes
   useEffect(() => {
@@ -997,12 +1092,6 @@ const SeatMapEditor: React.FC = () => {
     setObjectProperties({});
     setSelectedSeats(guids);
     showToast(`Selected ${guids.size} seat(s) in ${category.label || 'this category'}`);
-  };
-
-  // Show JSON output modal
-  const showJSONOutput = (): void => {
-    if (!seatData) return;
-    setShowOutput(true);
   };
 
   // Clear the whole selection
@@ -1458,6 +1547,9 @@ const SeatMapEditor: React.FC = () => {
         nudgeSelection(dx, dy);
       } else if (e.key === 'Escape') {
         setPendingInsert(null);
+        setPendingShape(null);
+        shapeDraftRef.current = null;
+        setShapeDraft(null);
         setSelectedSeats(new Set());
         setSelectedObject(null);
         setObjectProperties({});
@@ -1476,37 +1568,26 @@ const SeatMapEditor: React.FC = () => {
     };
   }, [fitToContent, resetZoom, zoomAtCenter, undo, redo, deleteSelection, nudgeSelection]);
   
-  // Handle clipboard copy
-  const handleClipboardCopy = async (): Promise<void> => {
-    if (!seatData) return;
-    
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(seatData, null, 2));
-      showToast('JSON copied to clipboard');
-    } catch (error) {
-      showToast('Auto-copy failed — select all text manually and copy.', 'error');
-    }
-  };
-
-  // Handle JSON download
+  // Export = download the JSON file directly (no preview modal)
   const handleJSONDownload = (): void => {
     if (!seatData) return;
-    
+
     const jsonString = JSON.stringify(seatData, null, 2);
     const blob = new Blob([jsonString], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    
+
+    const filename = `${seatData.name.replace(/\s+/g, '_').toLowerCase()}_seat_map.json`;
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${seatData.name.replace(/\s+/g, '_').toLowerCase()}_seat_map.json`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
-    
-    // Clean up
+
     setTimeout(() => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }, 100);
+    showToast(`Downloaded ${filename}`);
   };
 
   return (
@@ -1525,6 +1606,8 @@ const SeatMapEditor: React.FC = () => {
         isMoveEnabled={isMoveEnabled}
         onToggleMove={() => setIsMoveEnabled(prev => !prev)}
         onInsert={() => setShowInsertModal(true)}
+        onShape={(shape) => { setPendingShape(prev => prev === shape ? null : shape); setPendingInsert(null); }}
+        activeShape={pendingShape}
         onWizard={() => setShowWizard(true)}
         undo={undo}
         redo={redo}
@@ -1532,7 +1615,7 @@ const SeatMapEditor: React.FC = () => {
         canRedo={canRedo}
         onNewPlan={() => setShowNewPlanModal(true)}
         onUploadClick={() => fileInputRef.current?.click()}
-        onExport={showJSONOutput}
+        onExport={handleJSONDownload}
       />
       <div className="flex flex-1 overflow-hidden">
         {/* Canvas Area */}
@@ -1542,7 +1625,7 @@ const SeatMapEditor: React.FC = () => {
                 <canvas
                   ref={canvasRef}
                   className={`absolute inset-0 ${
-                    pendingInsert ? 'cursor-copy' : isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'
+                    pendingInsert || pendingShape ? 'cursor-crosshair' : isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'
                   }`}
                   style={hoverCursor ? { cursor: hoverCursor } : undefined}
                   onMouseDown={handleMouseDown}
@@ -1553,6 +1636,11 @@ const SeatMapEditor: React.FC = () => {
                 {pendingInsert && (
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
                     Click on the canvas to place · Esc to cancel
+                  </div>
+                )}
+                {pendingShape && (
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
+                    {pendingShape === 'text' ? 'Click to place text' : `Drag to draw a ${pendingShape}`} · Esc to cancel
                   </div>
                 )}
                 {/* Zoom toolbar */}
@@ -1675,15 +1763,6 @@ const SeatMapEditor: React.FC = () => {
       </div>
 
       {/* Modals */}
-      {showOutput && seatData && (
-        <JsonOutputModal
-          seatData={seatData}
-          onClose={() => setShowOutput(false)}
-          onCopy={handleClipboardCopy}
-          onDownload={handleJSONDownload}
-        />
-      )}
-
       {showInsertModal && seatData && (
         <InsertModal
           form={insertForm}
