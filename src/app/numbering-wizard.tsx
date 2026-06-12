@@ -361,7 +361,10 @@ const NumberingWizard: React.FC<NumberingWizardProps> = ({ seatData, selectedSea
               Preview <span className="font-normal text-gray-500">({preview.total} rows targeted)</span>
             </div>
             {preview.rows.length === 0 ? (
-              <p className="text-sm text-gray-500">No rows targeted.</p>
+              <p className="text-sm text-gray-500">
+                No rows targeted. The plan has no seats yet — close this wizard and use the Insert tool
+                (armchair icon in the toolbar) to add a seat grid first, then come back to number it.
+              </p>
             ) : (
               <table className="w-full text-sm">
                 <tbody>

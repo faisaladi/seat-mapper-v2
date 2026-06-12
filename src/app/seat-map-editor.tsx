@@ -2,7 +2,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 'use client';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Upload, Copy, X, Download, MousePointer, Grid3X3, Rows, ZoomIn, ZoomOut, Maximize, Undo2, Redo2, Wand2, Move, Armchair } from 'lucide-react';
+import { Upload, Copy, X, Download, MousePointer, Grid3X3, Rows, ZoomIn, ZoomOut, Maximize, Undo2, Redo2, Wand2, Move, Armchair, FilePlus, History } from 'lucide-react';
 import type { Position, Area, Seat, Row, Zone, Category, SeatData, ViewState, Bounds, SelectedObject } from './types';
 import NumberingWizard, { NumberingResult } from './numbering-wizard';
 import PropertiesPanel from './properties-panel';
@@ -393,43 +393,120 @@ const SeatMapEditor: React.FC = () => {
     return { data: newData, fixedCount };
   };
 
+  // Load a plan from JSON text — shared by file upload, drag-and-drop and
+  // autosave restore
+  const loadJSONText = useCallback((text: string): void => {
+    try {
+      const jsonData = JSON.parse(text);
+
+      // Validate and fix data
+      const { data: validatedData, fixedCount } = validateAndFixData(jsonData);
+
+      if (fixedCount > 0) {
+        showToast(`Fixed ${fixedCount} duplicate seat IDs in the uploaded file.`, 'info');
+      }
+
+      // Duplicate category names make colors and seat assignment ambiguous
+      const names = (validatedData.categories || []).map((c: Category) => c.name);
+      const dupes = names.filter((n: string, i: number) => names.indexOf(n) !== i);
+      if (dupes.length > 0) {
+        showToast(`Warning: ${dupes.length + 1} categories share the same name/UUID — edit one of them to a unique UUID, then reassign its seats.`, 'error');
+      }
+
+      undoStackRef.current = [];
+      redoStackRef.current = [];
+      setHistoryVersion(v => v + 1);
+      needsFitRef.current = true;
+      setSeatData(validatedData);
+      setSelectedSeats(new Set());
+      setSelectedObject(null);
+      setObjectProperties({});
+    } catch (error) {
+      showToast('Invalid JSON file', 'error');
+    }
+  }, [showToast]);
+
   // Handle file upload
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>): void => {
     const file = event.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onload = (e: ProgressEvent<FileReader>) => {
-        try {
-          if (!e.target?.result) return;
-          const jsonData = JSON.parse(e.target.result as string);
-          
-          // Validate and fix data
-          const { data: validatedData, fixedCount } = validateAndFixData(jsonData);
-
-          if (fixedCount > 0) {
-            showToast(`Fixed ${fixedCount} duplicate seat IDs in the uploaded file.`, 'info');
-          }
-
-          // Duplicate category names make colors and seat assignment ambiguous
-          const names = (validatedData.categories || []).map((c: Category) => c.name);
-          const dupes = names.filter((n: string, i: number) => names.indexOf(n) !== i);
-          if (dupes.length > 0) {
-            showToast(`Warning: ${dupes.length + 1} categories share the same name/UUID — edit one of them to a unique UUID, then reassign its seats.`, 'error');
-          }
-
-          undoStackRef.current = [];
-          redoStackRef.current = [];
-          setHistoryVersion(v => v + 1);
-          needsFitRef.current = true;
-          setSeatData(validatedData);
-          setSelectedSeats(new Set());
-        } catch (error) {
-          showToast('Invalid JSON file', 'error');
-        }
+        if (e.target?.result) loadJSONText(e.target.result as string);
       };
       reader.readAsText(file);
+      event.target.value = ''; // allow re-uploading the same file
     }
   };
+
+  // ===== Autosave (N6): debounced working copy in localStorage =====
+  const AUTOSAVE_KEY = 'seat-mapper:autosave';
+  const [autosaveMeta, setAutosaveMeta] = useState<{ name: string; savedAt: number } | null>(null);
+
+  // Offer to restore the last session on the landing screen
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(AUTOSAVE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.data?.zones) setAutosaveMeta({ name: parsed.data.name || 'Untitled Plan', savedAt: parsed.savedAt });
+      }
+    } catch { /* corrupt autosave — ignore */ }
+  }, []);
+
+  // Persist every change, debounced so slider drags don't hammer localStorage
+  useEffect(() => {
+    if (!seatData) return;
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ savedAt: Date.now(), data: seatData }));
+        setAutosaveMeta({ name: seatData.name, savedAt: Date.now() });
+      } catch { /* quota exceeded — plan too large for localStorage */ }
+    }, 800);
+    return () => clearTimeout(t);
+  }, [seatData]);
+
+  const restoreAutosave = (): void => {
+    try {
+      const raw = localStorage.getItem(AUTOSAVE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      undoStackRef.current = [];
+      redoStackRef.current = [];
+      setHistoryVersion(v => v + 1);
+      needsFitRef.current = true;
+      setSeatData(parsed.data);
+      setSelectedSeats(new Set());
+      showToast(`Restored "${parsed.data.name || 'Untitled Plan'}" from the last session`);
+    } catch {
+      showToast('Could not restore the last session', 'error');
+    }
+  };
+
+  // Drag-and-drop a JSON file anywhere on the window to open it
+  useEffect(() => {
+    const onDragOver = (e: DragEvent): void => e.preventDefault();
+    const onDrop = (e: DragEvent): void => {
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith('.json')) {
+        showToast('Drop a .json seating file to open it', 'error');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (ev: ProgressEvent<FileReader>) => {
+        if (ev.target?.result) loadJSONText(ev.target.result as string);
+      };
+      reader.readAsText(file);
+    };
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, [loadJSONText, showToast]);
 
   // Handle canvas mouse events
   // Find all seats in a row
@@ -1242,6 +1319,75 @@ const SeatMapEditor: React.FC = () => {
     });
   };
 
+  const updateCategoryColor = (categoryIndex: number, color: string): void => {
+    if (!seatData || !seatData.categories[categoryIndex]) return;
+    if (seatData.categories[categoryIndex].color === color) return;
+    beginGesture();
+    setSeatData({
+      ...seatData,
+      categories: seatData.categories.map((c: Category, i: number) =>
+        i === categoryIndex ? { ...c, color } : c
+      ),
+    });
+  };
+
+  const CATEGORY_PALETTE = ['#E61D54', '#1D8EF6', '#3BAD77', '#F9A62A', '#9B59B6', '#16A2B8', '#E67E22', '#7F8C8D'];
+
+  const addCategory = (): void => {
+    if (!seatData) return;
+    beginGesture();
+    const n = seatData.categories.length;
+    setSeatData({
+      ...seatData,
+      categories: [
+        ...seatData.categories,
+        { name: crypto.randomUUID(), color: CATEGORY_PALETTE[n % CATEGORY_PALETTE.length], label: `CAT ${n + 1}` },
+      ],
+    });
+    showToast('Category added — set its display name and swap in the real ticket UUID', 'info');
+  };
+
+  const deleteCategory = (categoryIndex: number): void => {
+    if (!seatData) return;
+    const category = seatData.categories[categoryIndex];
+    if (!category) return;
+    const inUse = categoryCounts.get(category.name) || 0;
+    if (inUse > 0) {
+      showToast(`${inUse} seat(s) still use this category — reassign them first.`, 'error');
+      return;
+    }
+    beginGesture();
+    setSeatData({
+      ...seatData,
+      categories: seatData.categories.filter((_: Category, i: number) => i !== categoryIndex),
+    });
+    showToast(`Deleted category "${category.label || category.name.slice(0, 8) + '…'}"`);
+  };
+
+  // Click a category's seat count to select all its seats (N4: highlight +
+  // quick bulk reassign)
+  const selectCategorySeats = (categoryIndex: number): void => {
+    if (!seatData) return;
+    const category = seatData.categories[categoryIndex];
+    if (!category) return;
+    const guids = new Set<string>();
+    seatData.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        row.seats.forEach((seat: Seat) => {
+          if (seat.category === category.name) guids.add(seat.seat_guid);
+        });
+      });
+    });
+    if (guids.size === 0) {
+      showToast('No seats use this category yet', 'info');
+      return;
+    }
+    setSelectedObject(null);
+    setObjectProperties({});
+    setSelectedSeats(guids);
+    showToast(`Selected ${guids.size} seat(s) in ${category.label || 'this category'}`);
+  };
+
   // Show JSON output modal
   const showJSONOutput = (): void => {
     if (!seatData) return;
@@ -1761,15 +1907,40 @@ const SeatMapEditor: React.FC = () => {
   const [pendingInsert, setPendingInsert] = useState<(InsertOptions & { kind: 'row' | 'grid' }) | null>(null);
   const [insertForm, setInsertForm] = useState({ rows: 5, seatsPerRow: 10, spacing: 28, rowSpacing: 28, radius: 10 });
 
-  const startBlankPlan = (): void => {
+  // New plan: modal with name + initial grid size (rows can be 0 for an empty
+  // plan). Available from the landing screen AND the toolbar while editing.
+  const [showNewPlanModal, setShowNewPlanModal] = useState<boolean>(false);
+  const [newPlanForm, setNewPlanForm] = useState({ name: 'Untitled Plan', rows: 10, seatsPerRow: 12, spacing: 28, rowSpacing: 28, radius: 10 });
+
+  const createNewPlan = (): void => {
+    const data = createBlankPlan(newPlanForm.name.trim() || 'Untitled Plan');
+    let seatCount = 0;
+    if (newPlanForm.rows > 0 && newPlanForm.seatsPerRow > 0) {
+      const added = insertSeatBlock(data, 0, { x: 120, y: 120 }, {
+        rows: newPlanForm.rows,
+        seatsPerRow: newPlanForm.seatsPerRow,
+        spacing: newPlanForm.spacing,
+        rowSpacing: newPlanForm.rowSpacing,
+        radius: newPlanForm.radius,
+        category: data.categories[0]?.name || '',
+      });
+      seatCount = added.reduce((a, r) => a + r.seats.length, 0);
+    }
     undoStackRef.current = [];
     redoStackRef.current = [];
     setHistoryVersion(v => v + 1);
     needsFitRef.current = true;
-    setSeatData(createBlankPlan());
+    setSeatData(data);
     setSelectedSeats(new Set());
     setSelectedObject(null);
-    showToast('Blank plan created — use Insert to add seats', 'info');
+    setObjectProperties({});
+    setShowNewPlanModal(false);
+    showToast(
+      seatCount > 0
+        ? `Created "${data.name}" — ${newPlanForm.rows} rows, ${seatCount} seats. Run Numbering next.`
+        : `Created empty plan "${data.name}" — use Insert to add seats`,
+      'success'
+    );
   };
   
   // Toggle selection mode
@@ -1959,6 +2130,14 @@ const SeatMapEditor: React.FC = () => {
         )}
         <div className="flex-1" />
         <button
+          onClick={() => setShowNewPlanModal(true)}
+          className="flex items-center px-3 py-1.5 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors mr-2"
+          title="Start a new plan"
+        >
+          <FilePlus className="w-4 h-4 mr-1.5" />
+          New
+        </button>
+        <button
           onClick={() => fileInputRef.current?.click()}
           className="flex items-center px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
         >
@@ -2046,12 +2225,22 @@ const SeatMapEditor: React.FC = () => {
                     Upload JSON File
                   </button>
                   <button
-                    onClick={startBlankPlan}
+                    onClick={() => setShowNewPlanModal(true)}
                     className="px-6 py-3 bg-white text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
                   >
-                    Start Blank Plan
+                    New Plan
                   </button>
                 </div>
+                {autosaveMeta && (
+                  <button
+                    onClick={restoreAutosave}
+                    className="mt-4 inline-flex items-center text-sm text-blue-600 hover:underline"
+                  >
+                    <History className="w-4 h-4 mr-1.5" />
+                    Restore last session — “{autosaveMeta.name}” ({new Date(autosaveMeta.savedAt).toLocaleString()})
+                  </button>
+                )}
+                <p className="mt-3 text-xs text-gray-400">…or drag &amp; drop a .json file anywhere</p>
               </div>
             </div>
           )}
@@ -2078,6 +2267,10 @@ const SeatMapEditor: React.FC = () => {
               assignCategory: assignCategoryToSelection,
               updateCategoryLabel,
               updateCategoryName,
+              updateCategoryColor,
+              addCategory,
+              deleteCategory,
+              selectCategorySeats,
               selectionBendStart: beginGesture,
               selectionBendChange,
             }}
@@ -2208,6 +2401,77 @@ const SeatMapEditor: React.FC = () => {
                 className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700"
               >
                 Place on canvas
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New plan modal: name + initial grid (rows can be 0 for empty plan) */}
+      {showNewPlanModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg w-full max-w-sm">
+            <div className="flex items-center justify-between p-4 border-b bg-gray-50 rounded-t-lg">
+              <h3 className="text-base font-semibold">New plan</h3>
+              <button onClick={() => setShowNewPlanModal(false)} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Plan name</label>
+                <input
+                  type="text"
+                  value={newPlanForm.name}
+                  onChange={(e) => setNewPlanForm(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg"
+                  autoFocus
+                  onFocus={(e) => e.target.select()}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {([
+                  ['rows', 'Rows'],
+                  ['seatsPerRow', 'Seats per row'],
+                  ['spacing', 'Seat spacing'],
+                  ['rowSpacing', 'Row spacing'],
+                  ['radius', 'Seat radius'],
+                ] as [keyof Omit<typeof newPlanForm, 'name'>, string][]).map(([key, label]) => (
+                  <div key={key}>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
+                    <input
+                      type="number"
+                      min={key === 'rows' || key === 'seatsPerRow' ? 0 : 1}
+                      value={newPlanForm[key]}
+                      onChange={(e) => setNewPlanForm(prev => ({ ...prev, [key]: Math.max(0, parseInt(e.target.value, 10) || 0) }))}
+                      className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg"
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500">
+                Set rows to 0 to start empty. You can always add more blocks later with the Insert tool.
+              </p>
+              {seatData && (
+                <p className="text-xs text-red-600 font-medium">
+                  This replaces the plan you are editing — export it first if you need to keep it.
+                </p>
+              )}
+            </div>
+            <div className="flex items-center justify-end space-x-2 p-4 border-t bg-gray-50 rounded-b-lg">
+              <button
+                onClick={() => setShowNewPlanModal(false)}
+                className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={createNewPlan}
+                className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+              >
+                {newPlanForm.rows > 0 && newPlanForm.seatsPerRow > 0
+                  ? `Create with ${newPlanForm.rows} × ${newPlanForm.seatsPerRow} seats`
+                  : 'Create empty plan'}
               </button>
             </div>
           </div>

@@ -1,6 +1,6 @@
 'use client';
 import React, { useRef, useState } from 'react';
-import { Trash2, Check, X, Edit2 } from 'lucide-react';
+import { Trash2, Check, X, Edit2, Plus } from 'lucide-react';
 import type { SeatData, SelectedObject, Seat, Row, Area, Category, Zone } from './types';
 import type { RowLayout } from './model-ops';
 import { estimateSelectionSagitta } from './model-ops';
@@ -22,6 +22,10 @@ export interface PanelCallbacks {
   assignCategory: (categoryIndex: number) => void;
   updateCategoryLabel: (categoryIndex: number, label: string) => void;
   updateCategoryName: (categoryIndex: number, name: string) => void;
+  updateCategoryColor: (categoryIndex: number, color: string) => void;
+  addCategory: () => void;
+  deleteCategory: (categoryIndex: number) => void;
+  selectCategorySeats: (categoryIndex: number) => void;
   selectionBendStart: () => void;
   selectionBendChange: (sagitta: number, gesture: boolean) => void;
 }
@@ -409,7 +413,19 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
             return (
               <div key={idx} className="p-2 border rounded-lg space-y-1">
                 <div className="flex items-center space-x-2">
-                  <span className="w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: category.color }} />
+                  <label
+                    className="relative w-4 h-4 rounded-full flex-shrink-0 cursor-pointer ring-offset-1 hover:ring-2 hover:ring-gray-300"
+                    style={{ backgroundColor: category.color }}
+                    title="Edit color"
+                  >
+                    <input
+                      key={`${idx}:${category.color}`}
+                      type="color"
+                      defaultValue={/^#[0-9a-fA-F]{6}$/.test(category.color) ? category.color : '#cccccc'}
+                      onBlur={(e) => { if (e.target.value !== category.color) callbacks.updateCategoryColor(idx, e.target.value); }}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                  </label>
                   <input
                     key={`${idx}:${category.label ?? ''}`}
                     type="text"
@@ -419,7 +435,20 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                     className="flex-1 min-w-0 px-1.5 py-1 text-sm font-medium border border-transparent hover:border-gray-300 focus:border-blue-400 rounded outline-none"
                   />
-                  <span className="text-xs text-gray-400 whitespace-nowrap">{categoryCounts.get(category.name) || 0}</span>
+                  <button
+                    onClick={() => callbacks.selectCategorySeats(idx)}
+                    className="px-1.5 py-0.5 text-xs text-gray-500 hover:bg-blue-50 hover:text-blue-700 rounded whitespace-nowrap"
+                    title="Select all seats in this category"
+                  >
+                    {categoryCounts.get(category.name) || 0} seats
+                  </button>
+                  <button
+                    onClick={() => callbacks.deleteCategory(idx)}
+                    className="p-1 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded flex-shrink-0"
+                    title="Delete category (must be empty)"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
                 {isEditing ? (
                   <div className="flex flex-col pl-6 space-y-1">
@@ -467,6 +496,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
               </div>
             );
           })}
+          <button
+            onClick={callbacks.addCategory}
+            className="w-full flex items-center justify-center px-3 py-1.5 text-sm text-gray-600 border border-dashed border-gray-300 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-colors"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            Add category
+          </button>
         </div>
 
         <p className="text-xs text-gray-500">

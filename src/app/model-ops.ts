@@ -310,8 +310,8 @@ export const curveSeats = (data: SeatData, guids: Set<string>, sagitta: number):
 };
 
 // A minimal valid plan for starting from scratch (single zone, TipTip-style)
-export const createBlankPlan = (): SeatData => ({
-  name: 'Untitled Plan',
+export const createBlankPlan = (name: string = 'Untitled Plan'): SeatData => ({
+  name,
   size: { width: 1500, height: 1800 },
   categories: [
     { name: crypto.randomUUID(), color: '#E61D54', label: 'CAT 1' },
