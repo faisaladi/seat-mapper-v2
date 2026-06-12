@@ -22,9 +22,11 @@ import {
   makeRectArea,
   makeEllipseArea,
   makeTextArea,
+  makePolygonArea,
   addArea,
   InsertOptions,
 } from './model/ops';
+import { tessellate, bbox, tracePath, type PenNode } from './engine/pen';
 import { computeContentMetrics } from './model/metrics';
 import { paintScene } from './engine/render';
 import { findObjectAtPosition as hitTest } from './engine/hit-test';
@@ -84,6 +86,16 @@ const SeatMapEditor: React.FC = () => {
   const [snapGuides, setSnapGuides] = useState<{ x: number | null; y: number | null }>({ x: null, y: null });
   const showGridRef = useRef<boolean>(false);
   showGridRef.current = showGrid;
+  // Pen tool (polygon + bezier curves). Nodes/cursor live in refs (read by the
+  // draw overlay); penActive state drives the toolbar + redraws.
+  const [penActive, setPenActive] = useState<boolean>(false);
+  const penNodesRef = useRef<PenNode[]>([]);
+  const penCursorRef = useRef<{ x: number; y: number } | null>(null);
+  // While the mouse is down on a freshly-placed node, dragging pulls out its
+  // bezier handles (symmetric), turning the corner into a smooth point.
+  const penDragRef = useRef<{ index: number } | null>(null);
+  const penActiveRef = useRef<boolean>(false);
+  penActiveRef.current = penActive;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showWizard, setShowWizard] = useState<boolean>(false);
@@ -357,6 +369,53 @@ const SeatMapEditor: React.FC = () => {
     return { x: r.x, y: r.y };
   };
 
+  const cancelPen = (): void => {
+    penNodesRef.current = [];
+    penCursorRef.current = null;
+    penDragRef.current = null;
+    setPenActive(false);
+    requestRedraw();
+  };
+
+  // Commit the in-progress pen path as a closed polygon area. Curves are
+  // tessellated into points for compatibility; editable nodes are stored too.
+  const commitPen = (): void => {
+    const data = seatDataRef.current;
+    const nodes = penNodesRef.current;
+    if (!data || nodes.length < 3) { cancelPen(); return; }
+    const zone = data.zones[0];
+    const zx = zone.position.x;
+    const zy = zone.position.y;
+    // Work in zone-relative space
+    const relNodes: PenNode[] = nodes.map(n => ({
+      x: n.x - zx, y: n.y - zy,
+      hIn: n.hIn ? { x: n.hIn.x - zx, y: n.hIn.y - zy } : undefined,
+      hOut: n.hOut ? { x: n.hOut.x - zx, y: n.hOut.y - zy } : undefined,
+    }));
+    const flat = tessellate(relNodes, true);
+    const bb = bbox(flat);
+    const origin = { x: bb.minX, y: bb.minY };
+    const points = flat.map(p => ({ x: p.x - origin.x, y: p.y - origin.y }));
+    const storedNodes = relNodes.map(n => ({
+      x: n.x - origin.x, y: n.y - origin.y,
+      hIn: n.hIn ? { x: n.hIn.x - origin.x, y: n.hIn.y - origin.y } : undefined,
+      hOut: n.hOut ? { x: n.hOut.x - origin.x, y: n.hOut.y - origin.y } : undefined,
+    }));
+    beginGesture();
+    const next = structuredClone(data);
+    const area = makePolygonArea(origin, points, storedNodes);
+    const idx = addArea(next, 0, area);
+    setSeatData(next);
+    penNodesRef.current = [];
+    penCursorRef.current = null;
+    penDragRef.current = null;
+    setPenActive(false);
+    setSelectionMode('object');
+    setSelectedObject({ type: 'area', id: area.uuid!, data: area, zoneIndex: 0, areaIndex: idx });
+    setSelectedSeats(new Set());
+    showToast(`Added polygon (${nodes.length} points)`);
+  };
+
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>): void => {
     if (!canvasRef.current || !seatData) return;
 
@@ -370,6 +429,21 @@ const SeatMapEditor: React.FC = () => {
     if (e.button !== 0) return;
 
     const { x, y } = screenToWorld(e.clientX, e.clientY);
+
+    // Pen tool: click to add a corner; the mousedown→drag pulls bezier handles
+    if (penActive) {
+      const nodes = penNodesRef.current;
+      const closeTol = 10 / viewRef.current.scale;
+      if (nodes.length >= 3 && Math.hypot(x - nodes[0].x, y - nodes[0].y) <= closeTol) {
+        commitPen();
+        return;
+      }
+      nodes.push({ x, y });
+      penDragRef.current = { index: nodes.length - 1 };
+      penCursorRef.current = { x, y };
+      requestRedraw();
+      return;
+    }
 
     // Armed insert tool: place the seat block at the click point
     if (pendingInsert) {
@@ -592,6 +666,22 @@ const SeatMapEditor: React.FC = () => {
 
     const { x, y } = screenToWorld(e.clientX, e.clientY);
 
+    // Pen tool: track cursor for the rubber-band; if dragging, pull symmetric
+    // bezier handles out of the node just placed.
+    if (penActive) {
+      penCursorRef.current = { x, y };
+      const drag = penDragRef.current;
+      if (drag) {
+        const node = penNodesRef.current[drag.index];
+        if (node) {
+          node.hOut = { x, y };
+          node.hIn = { x: 2 * node.x - x, y: 2 * node.y - y };
+        }
+      }
+      requestRedraw();
+      return;
+    }
+
     // Drawing a shape: extend the rubber-band (snap the moving corner)
     if (shapeDraftRef.current) {
       const s = snapWorld(x, y);
@@ -727,6 +817,11 @@ const SeatMapEditor: React.FC = () => {
     if (panLastRef.current) {
       panLastRef.current = null;
       setIsPanning(false);
+    }
+    // Pen: releasing finalizes the current node (handles, if any, are kept)
+    if (penActive) {
+      penDragRef.current = null;
+      return;
     }
     // Commit a drawn shape (rect / ellipse). A tiny drag uses a default size.
     if (shapeDraftRef.current && pendingShapeRef.current && seatData) {
@@ -1079,8 +1174,58 @@ const SeatMapEditor: React.FC = () => {
       ctx.stroke();
     }
 
+    // Pen tool: in-progress path preview (beziers), rubber-band, anchors, handles
+    if (penActive && penNodesRef.current.length > 0) {
+      const nodes = penNodesRef.current;
+      const cursor = penCursorRef.current;
+      const s = view.scale;
+      const r = 4 / s;
+      ctx.strokeStyle = '#7c3aed';
+      ctx.lineWidth = 2 / s;
+      ctx.beginPath();
+      tracePath(ctx, nodes, false);
+      ctx.stroke();
+      if (cursor) {
+        const last = nodes[nodes.length - 1];
+        ctx.strokeStyle = 'rgba(124,58,237,0.5)';
+        ctx.setLineDash([5 / s, 4 / s]);
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y);
+        ctx.lineTo(cursor.x, cursor.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.fillStyle = '#7c3aed';
+      ctx.strokeStyle = 'rgba(124,58,237,0.6)';
+      ctx.lineWidth = 1 / s;
+      for (const n of nodes) {
+        for (const h of [n.hIn, n.hOut]) {
+          if (!h) continue;
+          ctx.beginPath();
+          ctx.moveTo(n.x, n.y);
+          ctx.lineTo(h.x, h.y);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(h.x, h.y, 3 / s, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      }
+      nodes.forEach((n, i) => {
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#7c3aed';
+        ctx.lineWidth = 1.5 / s;
+        ctx.fillRect(n.x - r, n.y - r, r * 2, r * 2);
+        ctx.strokeRect(n.x - r, n.y - r, r * 2, r * 2);
+        if (i === 0 && nodes.length >= 3) {
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, r * 2.2, 0, 2 * Math.PI);
+          ctx.stroke();
+        }
+      });
+    }
+
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-  }, [seatData, contentMetrics, paintContent, selectedSeats, isDragging, dragStart, dragEnd, selectedObject, shapeDraft, pendingShape, showGrid, snapGuides]);
+  }, [seatData, contentMetrics, paintContent, selectedSeats, isDragging, dragStart, dragEnd, selectedObject, shapeDraft, pendingShape, showGrid, snapGuides, penActive]);
 
   // Keep the rAF loop pointed at the latest draw closure; redraw on state changes
   useEffect(() => {
@@ -1654,6 +1799,11 @@ const SeatMapEditor: React.FC = () => {
         else undo();
         return;
       }
+      // Pen tool: Enter finishes the polygon, Escape cancels it
+      if (penActiveRef.current) {
+        if (e.key === 'Enter') { e.preventDefault(); commitPen(); return; }
+        if (e.key === 'Escape') { e.preventDefault(); cancelPen(); return; }
+      }
       if (e.key === ' ') {
         e.preventDefault();
         setSpaceHeld(true);
@@ -1741,8 +1891,10 @@ const SeatMapEditor: React.FC = () => {
         isMoveEnabled={isMoveEnabled}
         onToggleMove={() => setIsMoveEnabled(prev => !prev)}
         onInsert={() => setShowInsertModal(true)}
-        onShape={(shape) => { setPendingShape(prev => prev === shape ? null : shape); setPendingInsert(null); }}
+        onShape={(shape) => { setPendingShape(prev => prev === shape ? null : shape); setPendingInsert(null); if (penActive) cancelPen(); }}
         activeShape={pendingShape}
+        onPen={() => { if (penActive) cancelPen(); else { setPenActive(true); setPendingShape(null); setPendingInsert(null); penNodesRef.current = []; penCursorRef.current = null; } }}
+        penActive={penActive}
         showGrid={showGrid}
         onToggleGrid={() => setShowGrid(g => !g)}
         onWizard={() => setShowWizard(true)}
@@ -1762,13 +1914,14 @@ const SeatMapEditor: React.FC = () => {
                 <canvas
                   ref={canvasRef}
                   className={`absolute inset-0 ${
-                    pendingInsert || pendingShape ? 'cursor-crosshair' : isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'
+                    pendingInsert || pendingShape || penActive ? 'cursor-crosshair' : isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'
                   }`}
                   style={hoverCursor ? { cursor: hoverCursor } : undefined}
                   onMouseDown={handleMouseDown}
                   onMouseMove={handleMouseMove}
                   onMouseUp={handleMouseUp}
                   onMouseLeave={handleMouseUp}
+                  onDoubleClick={() => { if (penActive) commitPen(); }}
                 />
                 {pendingInsert && (
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
@@ -1778,6 +1931,11 @@ const SeatMapEditor: React.FC = () => {
                 {pendingShape && (
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
                     {pendingShape === 'text' ? 'Click to place text' : `Drag to draw a ${pendingShape}`} · Esc to cancel
+                  </div>
+                )}
+                {penActive && (
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
+                    Click for corners · drag for curves · click the first point / double-click / Enter to finish · Esc cancels
                   </div>
                 )}
                 {/* Zoom toolbar */}

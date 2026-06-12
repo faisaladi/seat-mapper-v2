@@ -37,8 +37,21 @@ export interface Circle {
   radius: number;
 }
 
+// A handle for a curved polygon node (absolute control point, area-relative).
+export interface PolygonNode {
+  x: number;
+  y: number;
+  hIn?: Position;
+  hOut?: Position;
+}
+
 export interface Polygon {
+  // Flattened straight points consumed by pretix/TipTip. Curved paths are
+  // tessellated into many points here for compatibility.
   points: Position[];
+  // Editable curve nodes (our extra field; importers ignore it). Present only
+  // when the polygon was drawn with the pen tool so curves survive re-open.
+  nodes?: PolygonNode[];
 }
 
 export interface Area {

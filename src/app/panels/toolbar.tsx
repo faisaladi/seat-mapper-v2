@@ -1,6 +1,6 @@
 'use client';
 import React from 'react';
-import { Upload, Copy, MousePointer, Grid3X3, Rows, Undo2, Redo2, Wand2, Move, Armchair, FilePlus, Square, Circle, Type, Grid2x2 } from 'lucide-react';
+import { Upload, Copy, MousePointer, Grid3X3, Rows, Undo2, Redo2, Wand2, Move, Armchair, FilePlus, Square, Circle, Type, Grid2x2, PenTool } from 'lucide-react';
 
 // Top toolbar: selection modes, move toggle, insert/shape/numbering tools,
 // undo/redo, and the file actions (new / upload / export).
@@ -17,6 +17,8 @@ interface ToolbarProps {
   onInsert: () => void;
   onShape: (shape: ShapeKind) => void;
   activeShape: ShapeKind | null;
+  onPen: () => void;
+  penActive: boolean;
   onWizard: () => void;
   showGrid: boolean;
   onToggleGrid: () => void;
@@ -45,6 +47,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onInsert,
   onShape,
   activeShape,
+  onPen,
+  penActive,
   onWizard,
   showGrid,
   onToggleGrid,
@@ -85,6 +89,9 @@ const Toolbar: React.FC<ToolbarProps> = ({
         </button>
         <button onClick={() => onShape('text')} className={toolCls(activeShape === 'text', 'purple')} title="Add text label">
           <Type className="w-4 h-4" />
+        </button>
+        <button onClick={onPen} className={toolCls(penActive, 'purple')} title="Pen — draw polygon / curves (click for corners, drag for curves)">
+          <PenTool className="w-4 h-4" />
         </button>
         <button onClick={onWizard} className={toolCls(false)} title="Numbering & labels">
           <Wand2 className="w-4 h-4" />

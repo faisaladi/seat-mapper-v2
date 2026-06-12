@@ -343,6 +343,20 @@ export const makeTextArea = (x: number, y: number, text = 'Label'): Area => ({
   rotation: 0,
 });
 
+export const makePolygonArea = (
+  position: Position,
+  points: Position[],
+  nodes?: import('./types').PolygonNode[]
+): Area => ({
+  uuid: crypto.randomUUID(),
+  shape: 'polygon',
+  position,
+  color: '#dcfce7',
+  border_color: '#16a34a',
+  polygon: nodes ? { points, nodes } : { points },
+  rotation: 0,
+});
+
 // Append an area to a zone (creating the array if needed). Returns its index.
 export const addArea = (data: SeatData, zoneIndex: number, area: Area): number => {
   const zone = data.zones[zoneIndex];
