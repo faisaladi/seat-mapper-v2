@@ -1,7 +1,7 @@
 'use client';
 import React, { useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
-import type { SeatData, SelectedObject, Seat, Row, Area, Category } from './types';
+import { Trash2, Check, X, Edit2 } from 'lucide-react';
+import type { SeatData, SelectedObject, Seat, Row, Area, Category, Zone } from './types';
 import type { RowLayout } from './model-ops';
 
 // Contextual properties panel (pretix-style): what it shows depends on the
@@ -15,6 +15,12 @@ export interface PanelCallbacks {
   rowLayoutChange: (spacing: number, sagitta: number, gesture: boolean) => void;
   rowBulk: (field: 'radius' | 'category', value: number | string) => void;
   deleteSelection: () => void;
+  commitPlanName: (name: string) => void;
+  applyStatus: (status: string) => void;
+  clearSelection: () => void;
+  assignCategory: (categoryIndex: number) => void;
+  updateCategoryLabel: (categoryIndex: number, label: string) => void;
+  updateCategoryName: (categoryIndex: number, name: string) => void;
 }
 
 interface PropertiesPanelProps {
@@ -22,16 +28,24 @@ interface PropertiesPanelProps {
   selectedObject: SelectedObject | null;
   selectedSeats: Set<string>;
   rowLayout: RowLayout | null;
+  categoryCounts: Map<string, number>;
   callbacks: PanelCallbacks;
 }
 
+const STATUS_META: { key: string; label: string; outline: string }[] = [
+  { key: 'available', label: 'Available', outline: '#22c55e' },
+  { key: 'unavailable', label: 'Unavailable', outline: '#ef4444' },
+  { key: 'void', label: 'Void', outline: '#6b7280' },
+  { key: 'sold', label: 'Sold', outline: '#000000' },
+];
+
 const fieldCls = 'w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg bg-white';
 const labelCls = 'block text-xs font-medium text-gray-500 mb-1';
-const sectionCls = 'text-sm font-semibold text-gray-800 pb-1 border-b';
+const sectionCls = 'text-sm font-semibold text-gray-800 pb-1.5 border-b';
 
 const TextField: React.FC<{ label: string; value: string; onCommit: (v: string) => void; mono?: boolean }> = ({ label, value, onCommit, mono }) => (
   <div>
-    <label className={labelCls}>{label}</label>
+    {label && <label className={labelCls}>{label}</label>}
     <input
       key={value}
       type="text"
@@ -47,7 +61,7 @@ const NumberField: React.FC<{ label: string; value: number; onCommit: (v: number
   const display = Math.round(value * 10) / 10;
   return (
     <div>
-      <label className={labelCls}>{label}</label>
+      {label && <label className={labelCls}>{label}</label>}
       <input
         key={display}
         type="number"
@@ -66,7 +80,7 @@ const NumberField: React.FC<{ label: string; value: number; onCommit: (v: number
 
 const SelectField: React.FC<{ label: string; value: string; options: { value: string; label: string }[]; onCommit: (v: string) => void }> = ({ label, value, options, onCommit }) => (
   <div>
-    <label className={labelCls}>{label}</label>
+    {label && <label className={labelCls}>{label}</label>}
     <select value={value} onChange={(e) => onCommit(e.target.value)} className={fieldCls}>
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
@@ -104,13 +118,16 @@ const categoryOptions = (categories: Category[], extra?: { value: string; label:
   return extra ? [extra, ...opts] : opts;
 };
 
-const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObject, selectedSeats, rowLayout, callbacks }) => {
+const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObject, selectedSeats, rowLayout, categoryCounts, callbacks }) => {
   // Curve slider: live preview while dragging, single undo step (gesture
   // starts on pointer-down, layout changes are applied without new gestures)
   const dragSpacingRef = useRef<number>(25);
   const [sliderValue, setSliderValue] = useState<number | null>(null);
-
-  const totalSeats = seatData.zones.reduce((acc, z) => acc + z.rows.reduce((a, r) => a + r.seats.length, 0), 0);
+  // Selection view: chosen status before applying
+  const [statusChoice, setStatusChoice] = useState<string>('available');
+  // Plan view: category UUID editing
+  const [editingCat, setEditingCat] = useState<number | null>(null);
+  const [editCatName, setEditCatName] = useState<string>('');
 
   let content: React.ReactNode;
 
@@ -165,7 +182,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
             <NumberField label="" value={rowLayout.sagitta} onCommit={(v) => callbacks.rowLayoutChange(rowLayout.spacing, v, true)} />
             <button
               onClick={() => callbacks.rowLayoutChange(rowLayout.spacing, 0, true)}
-              className="ml-2 mt-1 px-2 py-1.5 text-xs bg-gray-100 border rounded hover:bg-gray-200 whitespace-nowrap"
+              className="ml-2 px-2 py-1.5 text-xs bg-gray-100 border rounded hover:bg-gray-200 whitespace-nowrap"
             >
               Straighten
             </button>
@@ -194,7 +211,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
         <SelectField
           label="Status"
           value={(seat.status || 'available').toLowerCase()}
-          options={['available', 'unavailable', 'void', 'sold'].map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }))}
+          options={STATUS_META.map(s => ({ value: s.key, label: s.label }))}
           onCommit={(v) => callbacks.commitObjectProp('status', v.toUpperCase())}
         />
         <SelectField
@@ -258,24 +275,150 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
     content = (
       <div className="space-y-3">
         <div className={sectionCls}>{selectedSeats.size} seats selected</div>
-        <p className="text-xs text-gray-500">
-          Use the left sidebar to update status, or a category card to assign. Arrow keys nudge the selection (⇧ = ×10).
-        </p>
+        <div className="space-y-2">
+          <SelectField
+            label="Set status"
+            value={statusChoice}
+            options={STATUS_META.map(s => ({ value: s.key, label: s.label }))}
+            onCommit={setStatusChoice}
+          />
+          <button
+            onClick={() => callbacks.applyStatus(statusChoice)}
+            className="w-full px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Apply to {selectedSeats.size} seat(s)
+          </button>
+        </div>
+        <div>
+          <label className={labelCls}>Assign to category</label>
+          <div className="space-y-1">
+            {seatData.categories.map((c, i) => (
+              <button
+                key={i}
+                onClick={() => callbacks.assignCategory(i)}
+                className="w-full flex items-center space-x-2 px-2 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-purple-50 hover:border-purple-300 transition-colors"
+              >
+                <span className="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ backgroundColor: c.color }} />
+                <span className="flex-1 text-left truncate">{c.label || c.name.slice(0, 20) + '…'}</span>
+                <span className="text-xs text-gray-400">{categoryCounts.get(c.name) || 0}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="text-xs text-gray-500">Arrow keys nudge the selection (⇧ = ×10).</p>
         <DeleteButton label={`Delete ${selectedSeats.size} seat(s)`} onClick={callbacks.deleteSelection} />
+        <button
+          onClick={callbacks.clearSelection}
+          className="w-full px-3 py-2 text-sm bg-gray-100 text-gray-700 border rounded-lg hover:bg-gray-200 transition-colors"
+        >
+          Clear selection
+        </button>
       </div>
     );
   } else {
+    // Plan view: name, stats (with status legend colors), categories manager
+    const stats: Record<string, number> = { available: 0, unavailable: 0, void: 0, sold: 0 };
+    seatData.zones.forEach((z: Zone) => z.rows.forEach((r: Row) => r.seats.forEach((s: Seat) => {
+      const k = (s.status || 'available').toLowerCase();
+      if (k in stats) stats[k]++;
+    })));
+    const total = Object.values(stats).reduce((a, b) => a + b, 0);
+
     content = (
-      <div className="space-y-3">
-        <div className={sectionCls}>Plan</div>
-        <div className="text-sm text-gray-700 space-y-1.5">
-          <div className="flex justify-between"><span className="text-gray-500">Name</span><span className="font-medium text-right break-all">{seatData.name}</span></div>
-          <div className="flex justify-between"><span className="text-gray-500">Canvas</span><span>{seatData.size?.width} × {seatData.size?.height}</span></div>
-          <div className="flex justify-between"><span className="text-gray-500">Seats</span><span>{totalSeats}</span></div>
-          <div className="flex justify-between"><span className="text-gray-500">Categories</span><span>{seatData.categories.length}</span></div>
+      <div className="space-y-4">
+        <div className="space-y-3">
+          <div className={sectionCls}>Plan</div>
+          <TextField label="Name" value={seatData.name} onCommit={callbacks.commitPlanName} />
+          <div className="flex justify-between text-sm text-gray-700">
+            <span className="text-gray-500">Canvas</span>
+            <span>{seatData.size?.width} × {seatData.size?.height}</span>
+          </div>
         </div>
+
+        <div className="space-y-2">
+          <div className={sectionCls}>Seats</div>
+          {STATUS_META.map(s => (
+            <div key={s.key} className="flex items-center text-sm">
+              <span
+                className="w-3.5 h-3.5 rounded-full border-2 mr-2 flex-shrink-0"
+                style={{ backgroundColor: '#e5e7eb', borderColor: s.outline }}
+              />
+              <span className="flex-1 text-gray-600">{s.label}</span>
+              <span className="font-medium tabular-nums">{stats[s.key]}</span>
+            </div>
+          ))}
+          <div className="flex items-center text-sm border-t pt-1.5">
+            <span className="flex-1 font-medium">Total</span>
+            <span className="font-semibold tabular-nums">{total}</span>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className={sectionCls}>Categories</div>
+          <p className="text-xs text-gray-500">
+            Display name is stored in the file and survives ticket-UUID changes. The UUID below it is what TipTip reads — swap it per show.
+          </p>
+          {seatData.categories.map((category: Category, idx: number) => (
+            <div key={idx} className="p-2 border rounded-lg space-y-1">
+              <div className="flex items-center space-x-2">
+                <span className="w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: category.color }} />
+                <input
+                  key={`${idx}:${category.label ?? ''}`}
+                  type="text"
+                  defaultValue={category.label ?? ''}
+                  placeholder="Display name (e.g. VIP)…"
+                  onBlur={(e) => callbacks.updateCategoryLabel(idx, e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                  className="flex-1 min-w-0 px-1.5 py-1 text-sm font-medium border border-transparent hover:border-gray-300 focus:border-blue-400 rounded outline-none"
+                />
+                <span className="text-xs text-gray-400 whitespace-nowrap">{categoryCounts.get(category.name) || 0}</span>
+              </div>
+              {editingCat === idx ? (
+                <div className="flex items-center space-x-1 pl-6">
+                  <input
+                    type="text"
+                    value={editCatName}
+                    onChange={(e) => setEditCatName(e.target.value)}
+                    className="flex-1 min-w-0 px-1.5 py-1 text-xs font-mono border rounded"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        callbacks.updateCategoryName(idx, editCatName);
+                        setEditingCat(null);
+                      }
+                      if (e.key === 'Escape') setEditingCat(null);
+                    }}
+                  />
+                  <button
+                    onClick={() => { callbacks.updateCategoryName(idx, editCatName); setEditingCat(null); }}
+                    className="p-1 text-green-600 hover:bg-green-100 rounded"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => setEditingCat(null)} className="p-1 text-red-600 hover:bg-red-100 rounded">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between pl-6">
+                  <span className="text-xs font-mono text-gray-400 break-all" title="Ticket UUID (category name read by TipTip)">
+                    {category.name}
+                  </span>
+                  <button
+                    onClick={() => { setEditingCat(idx); setEditCatName(category.name); }}
+                    className="p-1 text-blue-600 hover:bg-blue-100 rounded ml-1 flex-shrink-0"
+                    title="Edit ticket UUID"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
         <p className="text-xs text-gray-500">
-          Select a seat, row or shape to edit its properties. Use Insert in the left sidebar to add seats.
+          Select a seat, row or shape to edit it. Use the toolbar to insert seats or run numbering.
         </p>
       </div>
     );
