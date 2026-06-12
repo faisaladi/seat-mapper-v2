@@ -1,6 +1,6 @@
 'use client';
 import React from 'react';
-import { Upload, Copy, MousePointer, Grid3X3, Rows, Undo2, Redo2, Wand2, Move, Armchair, FilePlus, Square, Circle, Type } from 'lucide-react';
+import { Upload, Copy, MousePointer, Grid3X3, Rows, Undo2, Redo2, Wand2, Move, Armchair, FilePlus, Square, Circle, Type, Grid2x2 } from 'lucide-react';
 
 // Top toolbar: selection modes, move toggle, insert/shape/numbering tools,
 // undo/redo, and the file actions (new / upload / export).
@@ -18,6 +18,8 @@ interface ToolbarProps {
   onShape: (shape: ShapeKind) => void;
   activeShape: ShapeKind | null;
   onWizard: () => void;
+  showGrid: boolean;
+  onToggleGrid: () => void;
   undo: () => void;
   redo: () => void;
   canUndo: boolean;
@@ -44,6 +46,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onShape,
   activeShape,
   onWizard,
+  showGrid,
+  onToggleGrid,
   undo,
   redo,
   canUndo,
@@ -84,6 +88,10 @@ const Toolbar: React.FC<ToolbarProps> = ({
         </button>
         <button onClick={onWizard} className={toolCls(false)} title="Numbering & labels">
           <Wand2 className="w-4 h-4" />
+        </button>
+        <div className="w-px h-6 bg-gray-200 mx-1" />
+        <button onClick={onToggleGrid} className={toolCls(showGrid)} title="Toggle grid + snap">
+          <Grid2x2 className="w-4 h-4" />
         </button>
         <div className="w-px h-6 bg-gray-200 mx-1" />
         <button

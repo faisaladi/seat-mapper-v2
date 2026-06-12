@@ -42,6 +42,7 @@ import {
   type HandleId,
   type TransformBox,
 } from './engine/transform';
+import { snapPoint, GRID_SIZE, type SnapTargets } from './engine/snap';
 
 interface Toast {
   message: string;
@@ -74,8 +75,15 @@ const SeatMapEditor: React.FC = () => {
   const pendingShapeRef = useRef<ShapeKind | null>(null);
   pendingShapeRef.current = pendingShape;
   // Multi-select: drag-moving a whole seat selection, and additive marquee (shift)
-  const groupDragRef = useRef<{ lastX: number; lastY: number } | null>(null);
+  const groupDragRef = useRef<{ guid: string; offX: number; offY: number; curX: number; curY: number } | null>(null);
   const marqueeAdditiveRef = useRef<boolean>(false);
+  // Grid + snapping. Snap targets (peer coords) are built once at gesture start;
+  // active alignment guides are mirrored in state for rendering.
+  const [showGrid, setShowGrid] = useState<boolean>(false);
+  const snapTargetsRef = useRef<SnapTargets>({ xs: [], ys: [] });
+  const [snapGuides, setSnapGuides] = useState<{ x: number | null; y: number | null }>({ x: null, y: null });
+  const showGridRef = useRef<boolean>(false);
+  showGridRef.current = showGrid;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showWizard, setShowWizard] = useState<boolean>(false);
@@ -318,6 +326,37 @@ const SeatMapEditor: React.FC = () => {
     return seatsInRow;
   };
 
+  // Build the set of peer coordinates to snap against (unique seat + shape
+  // centers), excluding the objects currently being moved. Dedup to unique
+  // rounded values so a grid collapses to ~rows+cols entries.
+  const buildSnapTargets = (excludeGuids: Set<string>, excludeArea?: { z: number; i: number }): void => {
+    if (!seatData) { snapTargetsRef.current = { xs: [], ys: [] }; return; }
+    const xs = new Set<number>();
+    const ys = new Set<number>();
+    contentMetrics.positions.forEach((p, guid) => {
+      if (excludeGuids.has(guid)) return;
+      xs.add(Math.round(p.x));
+      ys.add(Math.round(p.y));
+    });
+    seatData.zones.forEach((zone: Zone, zi: number) => {
+      zone.areas?.forEach((area: Area, ai: number) => {
+        if (excludeArea && excludeArea.z === zi && excludeArea.i === ai) return;
+        const box = areaToBox(area, zone.position.x, zone.position.y);
+        if (box) { xs.add(Math.round(box.cx)); ys.add(Math.round(box.cy)); }
+      });
+    });
+    snapTargetsRef.current = { xs: [...xs], ys: [...ys] };
+  };
+
+  // Snap a world point against peers + grid; records guides for rendering.
+  const snapWorld = (x: number, y: number): { x: number; y: number } => {
+    const tol = 7 / viewRef.current.scale;
+    const grid = showGridRef.current ? GRID_SIZE : null;
+    const r = snapPoint(x, y, snapTargetsRef.current, grid, tol);
+    setSnapGuides({ x: r.guideX, y: r.guideY });
+    return { x: r.x, y: r.y };
+  };
+
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>): void => {
     if (!canvasRef.current || !seatData) return;
 
@@ -362,7 +401,9 @@ const SeatMapEditor: React.FC = () => {
         setSelectedSeats(new Set());
         showToast('Text added — edit it in the panel');
       } else {
-        const draft = { start: { x, y }, end: { x, y } };
+        buildSnapTargets(new Set());
+        const s = snapWorld(x, y);
+        const draft = { start: { x: s.x, y: s.y }, end: { x: s.x, y: s.y } };
         shapeDraftRef.current = draft;
         setShapeDraft(draft);
       }
@@ -407,7 +448,11 @@ const SeatMapEditor: React.FC = () => {
       }
       if (hit?.type === 'seat' && selectedSeats.size > 1 && selectedSeats.has(hit.id)) {
         beginGesture();
-        groupDragRef.current = { lastX: x, lastY: y };
+        const c = contentMetrics.positions.get(hit.id);
+        const cx = c?.x ?? x;
+        const cy = c?.y ?? y;
+        buildSnapTargets(selectedSeats);
+        groupDragRef.current = { guid: hit.id, offX: cx - x, offY: cy - y, curX: cx, curY: cy };
         return;
       }
     }
@@ -441,6 +486,10 @@ const SeatMapEditor: React.FC = () => {
         if (distance <= clickRadius) {
           // Start dragging the object
           beginGesture();
+          buildSnapTargets(
+            selectedObject.type === 'seat' ? new Set([selectedObject.id]) : new Set(),
+            selectedObject.type === 'area' ? { z: selectedObject.zoneIndex, i: selectedObject.areaIndex! } : undefined
+          );
           setIsDraggingObject(true);
           setDragOffset({ x: objectX - x, y: objectY - y });
           return;
@@ -480,6 +529,7 @@ const SeatMapEditor: React.FC = () => {
           const rowX = row.position.x + seatData.zones[object.zoneIndex].position.x;
           const rowY = row.position.y + seatData.zones[object.zoneIndex].position.y;
           beginGesture();
+          buildSnapTargets(new Set(row.seats.map((s: Seat) => s.seat_guid)));
           setIsDraggingObject(true);
           setDragOffset({ x: rowX - x, y: rowY - y });
         }
@@ -512,6 +562,10 @@ const SeatMapEditor: React.FC = () => {
             objectY = area.position.y + seatData.zones[object.zoneIndex].position.y;
           }
           beginGesture();
+          buildSnapTargets(
+            object.type === 'seat' ? new Set([object.id]) : new Set(),
+            object.type === 'area' ? { z: object.zoneIndex, i: object.areaIndex! } : undefined
+          );
           setIsDraggingObject(true);
           setDragOffset({ x: objectX - x, y: objectY - y });
         }
@@ -538,9 +592,10 @@ const SeatMapEditor: React.FC = () => {
 
     const { x, y } = screenToWorld(e.clientX, e.clientY);
 
-    // Drawing a shape: extend the rubber-band
+    // Drawing a shape: extend the rubber-band (snap the moving corner)
     if (shapeDraftRef.current) {
-      const draft = { start: shapeDraftRef.current.start, end: { x, y } };
+      const s = snapWorld(x, y);
+      const draft = { start: shapeDraftRef.current.start, end: { x: s.x, y: s.y } };
       shapeDraftRef.current = draft;
       setShapeDraft(draft);
       requestRedraw();
@@ -563,14 +618,20 @@ const SeatMapEditor: React.FC = () => {
       return;
     }
 
-    // Group drag: move the whole seat selection by the incremental delta
+    // Group drag: move the whole seat selection, snapping the grabbed seat's
+    // center to peers / grid; the rest of the group follows rigidly.
     if (groupDragRef.current) {
-      const dx = x - groupDragRef.current.lastX;
-      const dy = y - groupDragRef.current.lastY;
-      groupDragRef.current = { lastX: x, lastY: y };
-      const next = structuredClone(seatData);
-      offsetSeats(next, selectedSeats, dx, dy);
-      setSeatData(next);
+      const g = groupDragRef.current;
+      const target = snapWorld(x + g.offX, y + g.offY);
+      const dx = target.x - g.curX;
+      const dy = target.y - g.curY;
+      if (dx !== 0 || dy !== 0) {
+        const next = structuredClone(seatData);
+        offsetSeats(next, selectedSeats, dx, dy);
+        setSeatData(next);
+        g.curX = target.x;
+        g.curY = target.y;
+      }
       return;
     }
 
@@ -594,10 +655,11 @@ const SeatMapEditor: React.FC = () => {
     if (isDragging) {
       setDragEnd({ x, y });
     } else if (isDraggingObject && selectedObject && dragOffset && isMoveEnabled) {
-      // Calculate new position
-      const newX = x + dragOffset.x;
-      const newY = y + dragOffset.y;
-      
+      // Calculate new position, snapped to peers / grid
+      const snapped = snapWorld(x + dragOffset.x, y + dragOffset.y);
+      const newX = snapped.x;
+      const newY = snapped.y;
+
       // Update object position directly
       const updatedSeatData = { ...seatData };
       const { type, zoneIndex, rowIndex, seatIndex, areaIndex } = selectedObject;
@@ -703,6 +765,7 @@ const SeatMapEditor: React.FC = () => {
     }
     resizeRef.current = null;
     groupDragRef.current = null;
+    setSnapGuides({ x: null, y: null });
     if (isDragging && dragStart && dragEnd) {
       selectSeatsInArea();
     }
@@ -853,6 +916,24 @@ const SeatMapEditor: React.FC = () => {
     ctx.lineWidth = 1 / view.scale;
     ctx.strokeRect(b.x, b.y, b.w, b.h);
 
+    // Grid (behind content). Skip when the on-screen step would be too dense.
+    if (showGrid && GRID_SIZE * view.scale >= 6) {
+      ctx.strokeStyle = '#eef2f7';
+      ctx.lineWidth = 1 / view.scale;
+      ctx.beginPath();
+      const startX = Math.ceil(b.x / GRID_SIZE) * GRID_SIZE;
+      for (let gx = startX; gx <= b.x + b.w; gx += GRID_SIZE) {
+        ctx.moveTo(gx, b.y);
+        ctx.lineTo(gx, b.y + b.h);
+      }
+      const startY = Math.ceil(b.y / GRID_SIZE) * GRID_SIZE;
+      for (let gy = startY; gy <= b.y + b.h; gy += GRID_SIZE) {
+        ctx.moveTo(b.x, gy);
+        ctx.lineTo(b.x + b.w, gy);
+      }
+      ctx.stroke();
+    }
+
     const effectiveScale = view.scale * dpr;
     if (staticCanvasRef.current && effectiveScale <= staticScaleRef.current * 1.4) {
       ctx.imageSmoothingEnabled = true;
@@ -988,8 +1069,18 @@ const SeatMapEditor: React.FC = () => {
       ctx.setLineDash([]);
     }
 
+    // Alignment guides while snapping to a peer coordinate
+    if (snapGuides.x !== null || snapGuides.y !== null) {
+      ctx.strokeStyle = '#ec4899';
+      ctx.lineWidth = 1 / view.scale;
+      ctx.beginPath();
+      if (snapGuides.x !== null) { ctx.moveTo(snapGuides.x, b.y); ctx.lineTo(snapGuides.x, b.y + b.h); }
+      if (snapGuides.y !== null) { ctx.moveTo(b.x, snapGuides.y); ctx.lineTo(b.x + b.w, snapGuides.y); }
+      ctx.stroke();
+    }
+
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-  }, [seatData, contentMetrics, paintContent, selectedSeats, isDragging, dragStart, dragEnd, selectedObject, shapeDraft, pendingShape]);
+  }, [seatData, contentMetrics, paintContent, selectedSeats, isDragging, dragStart, dragEnd, selectedObject, shapeDraft, pendingShape, showGrid, snapGuides]);
 
   // Keep the rAF loop pointed at the latest draw closure; redraw on state changes
   useEffect(() => {
@@ -1652,6 +1743,8 @@ const SeatMapEditor: React.FC = () => {
         onInsert={() => setShowInsertModal(true)}
         onShape={(shape) => { setPendingShape(prev => prev === shape ? null : shape); setPendingInsert(null); }}
         activeShape={pendingShape}
+        showGrid={showGrid}
+        onToggleGrid={() => setShowGrid(g => !g)}
         onWizard={() => setShowWizard(true)}
         undo={undo}
         redo={redo}
