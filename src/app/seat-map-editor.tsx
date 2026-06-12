@@ -78,6 +78,8 @@ const SeatMapEditor: React.FC = () => {
   const shapeDraftRef = useRef<{ start: Position; end: Position } | null>(null);
   const pendingShapeRef = useRef<ShapeKind | null>(null);
   pendingShapeRef.current = pendingShape;
+  // On-canvas vector editing: dragging a curved polygon's anchor or bezier handle
+  const polyEditRef = useRef<{ kind: 'anchor' | 'hIn' | 'hOut'; index: number } | null>(null);
   // Multi-select: drag-moving a whole seat selection, and additive marquee (shift)
   const groupDragRef = useRef<{ guid: string; offX: number; offY: number; curX: number; curY: number } | null>(null);
   const marqueeAdditiveRef = useRef<boolean>(false);
@@ -418,6 +420,32 @@ const SeatMapEditor: React.FC = () => {
     showToast(`Added polygon (${nodes.length} points)`);
   };
 
+  // The selected curved polygon's editable nodes, plus the world origin to
+  // place them at. Null unless a polygon with stored nodes is selected.
+  const selectedPoly = useMemo(() => {
+    if (selectedObject?.type !== 'area' || selectedObject.areaIndex === undefined || !seatData) return null;
+    const zone = seatData.zones[selectedObject.zoneIndex];
+    const area = zone?.areas?.[selectedObject.areaIndex];
+    if (!area || area.shape !== 'polygon' || !area.polygon?.nodes || area.polygon.nodes.length === 0) return null;
+    return { ox: zone.position.x + area.position.x, oy: zone.position.y + area.position.y, nodes: area.polygon.nodes };
+  }, [selectedObject, seatData]);
+
+  // Hit a polygon anchor or handle (world coords) within tol; handles win.
+  const hitPolyPart = (px: number, py: number, tol: number): { kind: 'anchor' | 'hIn' | 'hOut'; index: number } | null => {
+    if (!selectedPoly) return null;
+    const { ox, oy, nodes } = selectedPoly;
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (n.hOut && Math.hypot(px - (ox + n.hOut.x), py - (oy + n.hOut.y)) <= tol) return { kind: 'hOut', index: i };
+      if (n.hIn && Math.hypot(px - (ox + n.hIn.x), py - (oy + n.hIn.y)) <= tol) return { kind: 'hIn', index: i };
+    }
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (Math.hypot(px - (ox + n.x), py - (oy + n.y)) <= tol) return { kind: 'anchor', index: i };
+    }
+    return null;
+  };
+
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>): void => {
     if (!canvasRef.current || !seatData) return;
 
@@ -501,6 +529,17 @@ const SeatMapEditor: React.FC = () => {
             return;
           }
         }
+      }
+    }
+
+    // Grab a curved polygon's anchor or bezier handle (vector editing)
+    if (selectedPoly) {
+      const part = hitPolyPart(x, y, 9 / viewRef.current.scale);
+      if (part) {
+        beginGesture();
+        polyEditRef.current = part;
+        if (part.kind === 'anchor') buildSnapTargets(new Set(), { z: selectedObject!.zoneIndex, i: selectedObject!.areaIndex! });
+        return;
       }
     }
 
@@ -710,6 +749,37 @@ const SeatMapEditor: React.FC = () => {
       return;
     }
 
+    // Vector editing: drag a polygon anchor (with its handles, snapped) or a
+    // single bezier handle; re-tessellate points so render/export stay in sync.
+    if (polyEditRef.current && selectedObject?.type === 'area' && selectedObject.areaIndex !== undefined) {
+      const { kind, index } = polyEditRef.current;
+      const zi = selectedObject.zoneIndex, ai = selectedObject.areaIndex;
+      const next = structuredClone(seatData);
+      const zone = next.zones[zi];
+      const area = zone.areas?.[ai];
+      if (area?.polygon?.nodes) {
+        const ox = zone.position.x + area.position.x;
+        const oy = zone.position.y + area.position.y;
+        const node = area.polygon.nodes[index];
+        if (kind === 'anchor') {
+          const t = snapWorld(x, y);
+          const nx = t.x - ox, ny = t.y - oy;
+          const dx = nx - node.x, dy = ny - node.y;
+          node.x = nx; node.y = ny;
+          if (node.hIn) { node.hIn.x += dx; node.hIn.y += dy; }
+          if (node.hOut) { node.hOut.x += dx; node.hOut.y += dy; }
+        } else if (kind === 'hOut') {
+          node.hOut = { x: x - ox, y: y - oy };
+        } else {
+          node.hIn = { x: x - ox, y: y - oy };
+        }
+        area.polygon.points = tessellate(area.polygon.nodes, true);
+        setSeatData(next);
+        setSelectedObject({ type: 'area', id: selectedObject.id, data: area, zoneIndex: zi, areaIndex: ai });
+      }
+      return;
+    }
+
     // Group drag: move the whole seat selection, snapping the grabbed seat's
     // center to peers / grid; the rest of the group follows rigidly.
     if (groupDragRef.current) {
@@ -863,6 +933,7 @@ const SeatMapEditor: React.FC = () => {
     }
     resizeRef.current = null;
     groupDragRef.current = null;
+    polyEditRef.current = null;
     setSnapGuides({ x: null, y: null });
     if (isDragging && dragStart && dragEnd) {
       selectSeatsInArea();
@@ -1104,6 +1175,36 @@ const SeatMapEditor: React.FC = () => {
                         ctx.fillRect(h.x - hs, h.y - hs, hs * 2, hs * 2);
                         ctx.strokeRect(h.x - hs, h.y - hs, hs * 2, hs * 2);
                     }
+                }
+            }
+
+            // Vector-editing overlay for a curved polygon: anchors + bezier handles
+            if (area.shape === 'polygon' && area.polygon?.nodes) {
+                const ox = zone.position.x + area.position.x;
+                const oy = zone.position.y + area.position.y;
+                const s = view.scale;
+                const r = 4 / s;
+                ctx.strokeStyle = 'rgba(124,58,237,0.7)';
+                ctx.fillStyle = '#7c3aed';
+                ctx.lineWidth = 1 / s;
+                for (const n of area.polygon.nodes) {
+                    for (const h of [n.hIn, n.hOut]) {
+                        if (!h) continue;
+                        ctx.beginPath();
+                        ctx.moveTo(ox + n.x, oy + n.y);
+                        ctx.lineTo(ox + h.x, oy + h.y);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.arc(ox + h.x, oy + h.y, 3 / s, 0, 2 * Math.PI);
+                        ctx.fill();
+                    }
+                }
+                ctx.fillStyle = '#ffffff';
+                ctx.strokeStyle = '#7c3aed';
+                ctx.lineWidth = 1.5 / s;
+                for (const n of area.polygon.nodes) {
+                    ctx.fillRect(ox + n.x - r, oy + n.y - r, r * 2, r * 2);
+                    ctx.strokeRect(ox + n.x - r, oy + n.y - r, r * 2, r * 2);
                 }
             }
         }
