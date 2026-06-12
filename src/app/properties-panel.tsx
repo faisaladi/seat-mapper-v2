@@ -3,6 +3,7 @@ import React, { useRef, useState } from 'react';
 import { Trash2, Check, X, Edit2 } from 'lucide-react';
 import type { SeatData, SelectedObject, Seat, Row, Area, Category, Zone } from './types';
 import type { RowLayout } from './model-ops';
+import { estimateSelectionSagitta } from './model-ops';
 
 // Contextual properties panel (pretix-style): what it shows depends on the
 // current selection — plan / seats marquee / seat / row / area.
@@ -21,6 +22,8 @@ export interface PanelCallbacks {
   assignCategory: (categoryIndex: number) => void;
   updateCategoryLabel: (categoryIndex: number, label: string) => void;
   updateCategoryName: (categoryIndex: number, name: string) => void;
+  selectionBendStart: () => void;
+  selectionBendChange: (sagitta: number, gesture: boolean) => void;
 }
 
 interface PropertiesPanelProps {
@@ -123,6 +126,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
   // starts on pointer-down, layout changes are applied without new gestures)
   const dragSpacingRef = useRef<number>(25);
   const [sliderValue, setSliderValue] = useState<number | null>(null);
+  // Selection bend slider: live value while dragging
+  const [selSliderValue, setSelSliderValue] = useState<number | null>(null);
   // Selection view: chosen status before applying
   const [statusChoice, setStatusChoice] = useState<string>('available');
   // Plan view: category UUID editing
@@ -305,6 +310,38 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
             ))}
           </div>
         </div>
+        {selectedSeats.size > 1 && (() => {
+          const selSagitta = selSliderValue ?? Math.round(estimateSelectionSagitta(seatData, selectedSeats));
+          return (
+            <div>
+              <label className={labelCls}>Bend selection</label>
+              <input
+                type="range"
+                min={-300}
+                max={300}
+                step={1}
+                value={selSagitta}
+                onPointerDown={() => callbacks.selectionBendStart()}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setSelSliderValue(v);
+                  callbacks.selectionBendChange(v, false);
+                }}
+                onPointerUp={() => setSelSliderValue(null)}
+                className="w-full accent-purple-600"
+              />
+              <div className="flex items-center justify-between">
+                <NumberField label="" value={selSagitta} onCommit={(v) => callbacks.selectionBendChange(v, true)} />
+                <button
+                  onClick={() => callbacks.selectionBendChange(0, true)}
+                  className="ml-2 px-2 py-1.5 text-xs bg-gray-100 border rounded hover:bg-gray-200 whitespace-nowrap"
+                >
+                  Straighten
+                </button>
+              </div>
+            </div>
+          );
+        })()}
         <p className="text-xs text-gray-500">Arrow keys nudge the selection (⇧ = ×10).</p>
         <DeleteButton label={`Delete ${selectedSeats.size} seat(s)`} onClick={callbacks.deleteSelection} />
         <button

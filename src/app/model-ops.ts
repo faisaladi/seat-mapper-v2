@@ -200,6 +200,115 @@ export const offsetSeats = (data: SeatData, guids: Set<string>, dx: number, dy: 
   });
 };
 
+// Estimate the current sagitta (arc height) of an arbitrary set of seats,
+// identified by guid. Works across multiple rows and zones, unlike
+// estimateRowLayout which only looks at one row.
+export const estimateSelectionSagitta = (data: SeatData, guids: Set<string>): number => {
+  const pts: { ax: number; ay: number }[] = [];
+  data.zones.forEach((zone: Zone) => {
+    const zx = zone.position?.x ?? 0;
+    const zy = zone.position?.y ?? 0;
+    zone.rows.forEach((row: Row) => {
+      const rx = row.position?.x ?? 0;
+      const ry = row.position?.y ?? 0;
+      row.seats.forEach((seat: Seat) => {
+        if (guids.has(seat.seat_guid)) {
+          pts.push({ ax: seat.position.x + rx + zx, ay: seat.position.y + ry + zy });
+        }
+      });
+    });
+  });
+  const n = pts.length;
+  if (n < 3) return 0;
+  const spreadX = Math.max(...pts.map(p => p.ax)) - Math.min(...pts.map(p => p.ax));
+  const spreadY = Math.max(...pts.map(p => p.ay)) - Math.min(...pts.map(p => p.ay));
+  pts.sort(spreadY > spreadX ? (a, b) => a.ay - b.ay : (a, b) => a.ax - b.ax);
+  const first = pts[0];
+  const last = pts[n - 1];
+  let dx = last.ax - first.ax;
+  let dy = last.ay - first.ay;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return 0;
+  dx /= len; dy /= len;
+  const mid = pts[Math.floor(n / 2)];
+  const mx = (first.ax + last.ax) / 2;
+  const my = (first.ay + last.ay) / 2;
+  return (mid.ax - mx) * -dy + (mid.ay - my) * dx;
+};
+
+// Redistribute an arbitrary selection of seats (identified by guid, spanning
+// any rows/zones) along a circular arc. The chord runs from the first to last
+// seat sorted along the dominant axis; sagitta encodes arc height and direction
+// using the same convention as layoutRow.
+export const curveSeats = (data: SeatData, guids: Set<string>, sagitta: number): void => {
+  interface AbsRef {
+    seat: Seat;
+    rowX: number; rowY: number;
+    zoneX: number; zoneY: number;
+    ax: number; ay: number;
+  }
+  const refs: AbsRef[] = [];
+  data.zones.forEach((zone: Zone) => {
+    const zoneX = zone.position?.x ?? 0;
+    const zoneY = zone.position?.y ?? 0;
+    zone.rows.forEach((row: Row) => {
+      const rowX = row.position?.x ?? 0;
+      const rowY = row.position?.y ?? 0;
+      row.seats.forEach((seat: Seat) => {
+        if (guids.has(seat.seat_guid)) {
+          refs.push({ seat, rowX, rowY, zoneX, zoneY,
+            ax: seat.position.x + rowX + zoneX,
+            ay: seat.position.y + rowY + zoneY });
+        }
+      });
+    });
+  });
+  const n = refs.length;
+  if (n < 2) return;
+  const spreadX = Math.max(...refs.map(r => r.ax)) - Math.min(...refs.map(r => r.ax));
+  const spreadY = Math.max(...refs.map(r => r.ay)) - Math.min(...refs.map(r => r.ay));
+  refs.sort(spreadY > spreadX ? (a, b) => a.ay - b.ay : (a, b) => a.ax - b.ax);
+  const first = refs[0];
+  const last = refs[n - 1];
+  let dx = last.ax - first.ax;
+  let dy = last.ay - first.ay;
+  const chord = Math.hypot(dx, dy);
+  if (chord < 1e-6) return;
+  dx /= chord; dy /= chord;
+
+  const place = (r: AbsRef, ax: number, ay: number): void => {
+    r.seat.position.x = ax - r.rowX - r.zoneX;
+    r.seat.position.y = ay - r.rowY - r.zoneY;
+  };
+
+  if (Math.abs(sagitta) < 0.01) {
+    refs.forEach((r, i) => {
+      const t = i / (n - 1);
+      place(r, first.ax + dx * chord * t, first.ay + dy * chord * t);
+    });
+    return;
+  }
+
+  const s = Math.abs(sagitta);
+  const R = (chord * chord) / (8 * s) + s / 2;
+  const half = Math.asin(Math.min(1, chord / 2 / R));
+  const sign = sagitta >= 0 ? 1 : -1;
+  const nx = -dy * sign;
+  const ny = dx * sign;
+  const mx = first.ax + (dx * chord) / 2;
+  const my = first.ay + (dy * chord) / 2;
+  const cx = mx + nx * s - nx * R;
+  const cy = my + ny * s - ny * R;
+  const a0 = Math.atan2(first.ay - cy, first.ax - cx);
+  const vax = mx + nx * s - cx;
+  const vay = my + ny * s - cy;
+  const dir = Math.sign((first.ax - cx) * vay - (first.ay - cy) * vax) || 1;
+  refs.forEach((r, i) => {
+    const ang = a0 + dir * 2 * half * (i / (n - 1));
+    place(r, cx + R * Math.cos(ang), cy + R * Math.sin(ang));
+  });
+};
+
 // A minimal valid plan for starting from scratch (single zone, TipTip-style)
 export const createBlankPlan = (): SeatData => ({
   name: 'Untitled Plan',

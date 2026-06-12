@@ -15,6 +15,7 @@ import {
   deleteAreaAt,
   offsetSeats,
   createBlankPlan,
+  curveSeats,
   InsertOptions,
 } from './model-ops';
 
@@ -1659,6 +1660,16 @@ const SeatMapEditor: React.FC = () => {
     refreshRowSelection(next, selectedObject.zoneIndex, selectedObject.rowIndex);
   };
 
+  // Curve an arbitrary seat selection along a circular arc (works across rows
+  // and physical gaps — treats the selected seats as a flat point set)
+  const selectionBendChange = (sagitta: number, gesture: boolean): void => {
+    if (!seatData || selectedSeats.size < 2) return;
+    if (gesture) beginGesture();
+    const next = structuredClone(seatData);
+    curveSeats(next, selectedSeats, sagitta);
+    setSeatData(next);
+  };
+
   const selectedRowLayout = useMemo(() => {
     if (selectedObject?.type === 'row') return estimateRowLayout(selectedObject.data as Row);
     return null;
@@ -2061,6 +2072,8 @@ const SeatMapEditor: React.FC = () => {
               assignCategory: assignCategoryToSelection,
               updateCategoryLabel,
               updateCategoryName,
+              selectionBendStart: beginGesture,
+              selectionBendChange,
             }}
           />
         )}
