@@ -29,24 +29,24 @@ const paintAreas = (ctx: CanvasRenderingContext2D, seatData: SeatData): void => 
 
         const x = area.position.x + zone.position.x;
         const y = area.position.y + zone.position.y;
+        const w = area.rectangle.width;
+        const h = area.rectangle.height;
 
-        ctx.fillRect(x, y, area.rectangle.width, area.rectangle.height);
-        ctx.strokeRect(x, y, area.rectangle.width, area.rectangle.height);
+        // Draw in a frame rotated around the rectangle's center
+        ctx.save();
+        ctx.translate(x + w / 2, y + h / 2);
+        if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
+        ctx.fillRect(-w / 2, -h / 2, w, h);
+        ctx.strokeRect(-w / 2, -h / 2, w, h);
 
         if (area.text && area.text.text && area.text.text.trim() !== '') {
           ctx.fillStyle = area.text.color || '#000000';
           ctx.font = `${area.text.size || 16}px Arial`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-
-          ctx.save();
-          ctx.translate(x + area.rectangle.width / 2, y + area.rectangle.height / 2);
-          if (area.rotation) {
-            ctx.rotate((area.rotation * Math.PI) / 180);
-          }
           ctx.fillText(area.text.text, 0, 0);
-          ctx.restore();
         }
+        ctx.restore();
       }
 
       if (area.shape === 'circle' && area.circle?.radius) {

@@ -24,6 +24,8 @@ import {
   makeTextArea,
   makePolygonArea,
   addArea,
+  reorderArea,
+  type ArrangeDir,
   InsertOptions,
 } from './model/ops';
 import { tessellate, bbox, tracePath, type PenNode } from './engine/pen';
@@ -814,6 +816,7 @@ const SeatMapEditor: React.FC = () => {
   };
 
   const handleMouseUp = (): void => {
+    setSnapGuides({ x: null, y: null });
     if (panLastRef.current) {
       panLastRef.current = null;
       setIsPanning(false);
@@ -1058,7 +1061,12 @@ const SeatMapEditor: React.FC = () => {
             ctx.lineWidth = 3 / view.scale;
 
             if (area.shape === 'rectangle' && area.rectangle) {
-                ctx.strokeRect(x - 2, y - 2, area.rectangle.width + 4, area.rectangle.height + 4);
+                const w = area.rectangle.width, h = area.rectangle.height;
+                ctx.save();
+                ctx.translate(x + w / 2, y + h / 2);
+                if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
+                ctx.strokeRect(-w / 2 - 2, -h / 2 - 2, w + 4, h + 4);
+                ctx.restore();
             } else if (area.shape === 'circle' && area.circle?.radius) {
                 ctx.beginPath();
                 ctx.arc(x, y, area.circle.radius + 2, 0, 2 * Math.PI);
@@ -1381,6 +1389,17 @@ const SeatMapEditor: React.FC = () => {
     setObjectProperties({});
   };
 
+  // Arrange a selected shape in the draw order (seats always stay in front)
+  const arrangeSelectedArea = (dir: ArrangeDir): void => {
+    if (!seatData || selectedObject?.type !== 'area' || selectedObject.areaIndex === undefined) return;
+    beginGesture();
+    const next = structuredClone(seatData);
+    const newIdx = reorderArea(next, selectedObject.zoneIndex, selectedObject.areaIndex, dir);
+    setSeatData(next);
+    const area = next.zones[selectedObject.zoneIndex].areas![newIdx];
+    setSelectedObject({ type: 'area', id: selectedObject.id, data: area, zoneIndex: selectedObject.zoneIndex, areaIndex: newIdx });
+  };
+
   // Rename the plan (from the properties panel)
   const commitPlanName = (name: string): void => {
     if (!seatData || !name.trim() || name.trim() === seatData.name) return;
@@ -1600,9 +1619,46 @@ const SeatMapEditor: React.FC = () => {
   };
 
   // Seat/area fields from the properties panel: one gesture per commit
+  // Commit a single seat/area field. Uses a deep clone + index-based
+  // re-selection (not hit-testing) so it stays correct even when the change
+  // moves the shape out from under its old anchor (e.g. rotating a rectangle).
   const commitObjectProp = (prop: string, value: string | number): void => {
+    const sel = selectedObjectRef.current;
+    const data = seatDataRef.current;
+    if (!sel || !data) return;
     beginGesture();
-    updateObjectProperty(prop, value);
+    const next = structuredClone(data);
+    const { type, zoneIndex, rowIndex, seatIndex, areaIndex } = sel;
+    const num = typeof value === 'number' ? value : Number(value);
+
+    if (type === 'seat' && rowIndex !== undefined && seatIndex !== undefined) {
+      const seat = next.zones[zoneIndex].rows[rowIndex].seats[seatIndex];
+      if (prop === 'position_x') seat.position.x = num;
+      else if (prop === 'position_y') seat.position.y = num;
+      else if (prop === 'seat_number') seat.seat_number = String(value);
+      else if (prop === 'category') seat.category = String(value);
+      else if (prop === 'status') seat.status = String(value);
+      else if (prop === 'radius') seat.radius = num;
+      setSeatData(next);
+      setSelectedObject({ ...sel, data: seat });
+    } else if (type === 'area' && areaIndex !== undefined && next.zones[zoneIndex].areas) {
+      const area = next.zones[zoneIndex].areas![areaIndex];
+      if (prop === 'position_x') area.position.x = num;
+      else if (prop === 'position_y') area.position.y = num;
+      else if (prop === 'width' && area.rectangle) area.rectangle.width = num;
+      else if (prop === 'height' && area.rectangle) area.rectangle.height = num;
+      else if (prop === 'radius' && area.circle) area.circle.radius = num;
+      else if (prop === 'radius_x' && area.ellipse?.radius) area.ellipse.radius.x = num;
+      else if (prop === 'radius_y' && area.ellipse?.radius) area.ellipse.radius.y = num;
+      else if (prop === 'rotation') area.rotation = num;
+      else if (prop === 'color') area.color = String(value);
+      else if (prop === 'border_color') area.border_color = String(value);
+      else if (prop === 'text' && area.text) area.text.text = String(value);
+      else if (prop === 'text_color' && area.text) area.text.color = String(value);
+      else if (prop === 'text_size' && area.text) area.text.size = num;
+      setSeatData(next);
+      setSelectedObject({ ...sel, data: area });
+    }
   };
 
   const commitRowField = (field: 'row_number' | 'row_number_position', value: string): void => {
@@ -2037,6 +2093,7 @@ const SeatMapEditor: React.FC = () => {
               selectCategorySeats,
               selectionBendStart: beginGesture,
               selectionBendChange,
+              arrangeArea: arrangeSelectedArea,
             }}
           />
         )}

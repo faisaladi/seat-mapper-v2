@@ -38,7 +38,7 @@ export const areaToBox = (area: Area, zoneX: number, zoneY: number): TransformBo
   const px = area.position.x + zoneX;
   const py = area.position.y + zoneY;
   if (area.shape === 'rectangle' && area.rectangle) {
-    return { cx: px + area.rectangle.width / 2, cy: py + area.rectangle.height / 2, hx: area.rectangle.width / 2, hy: area.rectangle.height / 2, rot: 0 };
+    return { cx: px + area.rectangle.width / 2, cy: py + area.rectangle.height / 2, hx: area.rectangle.width / 2, hy: area.rectangle.height / 2, rot: ((area.rotation || 0) * Math.PI) / 180 };
   }
   if (area.shape === 'circle' && area.circle?.radius != null) {
     return { cx: px, cy: py, hx: area.circle.radius, hy: area.circle.radius, rot: 0 };

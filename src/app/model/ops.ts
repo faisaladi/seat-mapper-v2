@@ -365,6 +365,23 @@ export const addArea = (data: SeatData, zoneIndex: number, area: Area): number =
   return zone.areas.length - 1;
 };
 
+// Reorder a shape within its zone's draw order. Areas paint in array order
+// (later = on top) and seats always paint after all areas, so this only
+// changes stacking relative to other shapes. Returns the area's new index.
+export type ArrangeDir = 'front' | 'back' | 'forward' | 'backward';
+export const reorderArea = (data: SeatData, zoneIndex: number, areaIndex: number, dir: ArrangeDir): number => {
+  const areas = data.zones[zoneIndex]?.areas;
+  if (!areas || !areas[areaIndex]) return areaIndex;
+  const [area] = areas.splice(areaIndex, 1);
+  let target: number;
+  if (dir === 'front') target = areas.length;
+  else if (dir === 'back') target = 0;
+  else if (dir === 'forward') target = Math.min(areas.length, areaIndex + 1);
+  else target = Math.max(0, areaIndex - 1);
+  areas.splice(target, 0, area);
+  return target;
+};
+
 // A minimal valid plan for starting from scratch (single zone, TipTip-style)
 export const createBlankPlan = (name: string = 'Untitled Plan'): SeatData => ({
   name,

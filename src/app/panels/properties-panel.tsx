@@ -1,6 +1,6 @@
 'use client';
 import React, { useRef, useState } from 'react';
-import { Trash2, Check, X, Edit2, Plus } from 'lucide-react';
+import { Trash2, Check, X, Edit2, Plus, BringToFront, SendToBack } from 'lucide-react';
 import type { SeatData, SelectedObject, Seat, Row, Area, Category, Zone } from '../model/types';
 import type { RowLayout } from '../model/ops';
 import { estimateSelectionSagitta } from '../model/ops';
@@ -28,6 +28,7 @@ export interface PanelCallbacks {
   selectCategorySeats: (categoryIndex: number) => void;
   selectionBendStart: () => void;
   selectionBendChange: (sagitta: number, gesture: boolean) => void;
+  arrangeArea: (dir: 'front' | 'back' | 'forward' | 'backward') => void;
 }
 
 interface PropertiesPanelProps {
@@ -280,6 +281,23 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
             </div>
           </>
         )}
+        <div>
+          <label className={labelCls}>Arrange <span className="font-normal text-gray-400">(seats stay in front)</span></label>
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => callbacks.arrangeArea('front')} className="flex items-center justify-center px-2 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-100">
+              <BringToFront className="w-3.5 h-3.5 mr-1.5" /> To front
+            </button>
+            <button onClick={() => callbacks.arrangeArea('back')} className="flex items-center justify-center px-2 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-100">
+              <SendToBack className="w-3.5 h-3.5 mr-1.5" /> To back
+            </button>
+            <button onClick={() => callbacks.arrangeArea('forward')} className="flex items-center justify-center px-2 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-100">
+              Forward
+            </button>
+            <button onClick={() => callbacks.arrangeArea('backward')} className="flex items-center justify-center px-2 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-100">
+              Backward
+            </button>
+          </div>
+        </div>
         <DeleteButton label="Delete shape" onClick={callbacks.deleteSelection} />
       </div>
     );

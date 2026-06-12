@@ -59,12 +59,17 @@ export const findObjectAtPosition = (
         const areaY = area.position.y + zone.position.y;
 
         if (area.shape === 'rectangle' && area.rectangle) {
-          if (
-            x >= areaX &&
-            x <= areaX + area.rectangle.width &&
-            y >= areaY &&
-            y <= areaY + area.rectangle.height
-          ) {
+          const w = area.rectangle.width;
+          const h = area.rectangle.height;
+          // Test in the rectangle's local frame (rotated around its center)
+          const cx = areaX + w / 2;
+          const cy = areaY + h / 2;
+          const rot = ((area.rotation || 0) * Math.PI) / 180;
+          const c = Math.cos(-rot), s = Math.sin(-rot);
+          const dx = x - cx, dy = y - cy;
+          const lx = dx * c - dy * s;
+          const ly = dx * s + dy * c;
+          if (lx >= -w / 2 && lx <= w / 2 && ly >= -h / 2 && ly <= h / 2) {
             matchingObjects.push({
               type: 'area',
               id: area.uuid || `area-${zoneIndex}-${areaIndex}`,
