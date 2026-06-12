@@ -102,6 +102,16 @@ export interface SeatData {
   categories: Category[];
 }
 
+export type SelectedObject = {
+  type: 'seat' | 'area' | 'row';
+  id: string;
+  data: Seat | Area | Row;
+  zoneIndex: number;
+  rowIndex?: number;
+  seatIndex?: number;
+  areaIndex?: number;
+};
+
 export interface ViewState {
   scale: number;
   x: number;

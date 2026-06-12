@@ -2,6 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import { X, Wand2 } from 'lucide-react';
 import type { SeatData, Row, Zone, Seat } from './types';
+import { orderedSeatIndices } from './model-ops';
 
 export interface NumberingOptions {
   scope: 'all' | 'selected';
@@ -76,19 +77,6 @@ const collectTargetRows = (data: SeatData, selected: Set<string>, scope: 'all' |
     });
   });
   return targets;
-};
-
-// Seats ordered along the row's dominant axis (handles curved rows; ascending = left-to-right)
-const orderedSeatIndices = (row: Row): number[] => {
-  const xs = row.seats.map(s => s.position.x);
-  const ys = row.seats.map(s => s.position.y);
-  const spreadX = Math.max(...xs) - Math.min(...xs);
-  const spreadY = Math.max(...ys) - Math.min(...ys);
-  const axis: 'x' | 'y' = spreadY > spreadX ? 'y' : 'x';
-  return row.seats
-    .map((s, i) => ({ i, v: s.position[axis] }))
-    .sort((a, b) => a.v - b.v)
-    .map(o => o.i);
 };
 
 const renderTemplate = (template: string, rowName: string, n: string): string =>

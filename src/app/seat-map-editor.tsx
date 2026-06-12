@@ -2,9 +2,21 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 'use client';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Upload, Copy, RotateCcw, Save, Edit2, Check, X, Download, MousePointer, Grid3X3, Rows, ZoomIn, ZoomOut, Maximize, Undo2, Redo2, Wand2 } from 'lucide-react';
-import type { Position, Area, Seat, Row, Zone, Category, SeatData, ViewState, Bounds } from './types';
+import { Upload, Copy, X, Download, MousePointer, Grid3X3, Rows, ZoomIn, ZoomOut, Maximize, Undo2, Redo2, Wand2, Move, Armchair } from 'lucide-react';
+import type { Position, Area, Seat, Row, Zone, Category, SeatData, ViewState, Bounds, SelectedObject } from './types';
 import NumberingWizard, { NumberingResult } from './numbering-wizard';
+import PropertiesPanel from './properties-panel';
+import {
+  estimateRowLayout,
+  layoutRow,
+  insertSeatBlock,
+  deleteSeats,
+  deleteRowAt,
+  deleteAreaAt,
+  offsetSeats,
+  createBlankPlan,
+  InsertOptions,
+} from './model-ops';
 
 interface StatusConfig {
   outline: string;
@@ -23,9 +35,8 @@ interface Toast {
   type: 'success' | 'error' | 'info';
 }
 
-// Define types for selected objects and selection mode
+// Selection mode for the canvas
 type SelectionMode = 'area' | 'row' | 'object';
-type SelectedObject = { type: 'seat' | 'area' | 'row', id: string, data: Seat | Area | Row, zoneIndex: number, rowIndex?: number, seatIndex?: number, areaIndex?: number };
 
 const SeatMapEditor: React.FC = () => {
   const [seatData, setSeatData] = useState<SeatData | null>(null);
@@ -33,19 +44,12 @@ const SeatMapEditor: React.FC = () => {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<Position | null>(null);
   const [dragEnd, setDragEnd] = useState<Position | null>(null);
-  const [currentStatus, setCurrentStatus] = useState<string>('available');
-  // Categories are edited by index, not by name: names are ticket UUIDs that
-  // can (accidentally) collide, and name-based identity made duplicates
-  // impossible to disentangle.
-  const [editingCategory, setEditingCategory] = useState<number | null>(null);
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('area');
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
   const [objectProperties, setObjectProperties] = useState<Record<string, string | number>>({});
   const [isMoveEnabled, setIsMoveEnabled] = useState<boolean>(false);
-  const [editCategoryName, setEditCategoryName] = useState<string>('');
-  const [editingTitle, setEditingTitle] = useState<boolean>(false);
-  const [editTitle, setEditTitle] = useState<string>('');
   const [showOutput, setShowOutput] = useState<boolean>(false);
+  const [showInsertModal, setShowInsertModal] = useState<boolean>(false);
   const [isDraggingObject, setIsDraggingObject] = useState<boolean>(false);
   const [dragOffset, setDragOffset] = useState<Position | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -464,6 +468,21 @@ const SeatMapEditor: React.FC = () => {
 
     const { x, y } = screenToWorld(e.clientX, e.clientY);
 
+    // Armed insert tool: place the seat block at the click point
+    if (pendingInsert) {
+      beginGesture();
+      const next = structuredClone(seatData);
+      const added = insertSeatBlock(next, 0, { x, y }, {
+        ...pendingInsert,
+        category: seatData.categories[0]?.name || '',
+      });
+      setSeatData(next);
+      setPendingInsert(null);
+      const seatCount = added.reduce((a, r) => a + r.seats.length, 0);
+      showToast(`Added ${added.length} row(s), ${seatCount} seat(s)`);
+      return;
+    }
+
     if (selectionMode === 'area') {
       // Check if we're clicking on a selected object first
       if (selectedObject && isMoveEnabled) {
@@ -700,24 +719,25 @@ const SeatMapEditor: React.FC = () => {
     setSelectedSeats(newSelectedSeats);
   };
 
-  // Update selected seats status
-  const updateSelectedSeatsStatus = (): void => {
+  // Apply a status to the selected seats (from the properties panel)
+  const applyStatusToSelection = (status: string): void => {
     if (!seatData || selectedSeats.size === 0) return;
 
     beginGesture();
     const updatedSeatData: SeatData = { ...seatData };
-    
+
     updatedSeatData.zones.forEach((zone: Zone) => {
       zone.rows.forEach((row: Row) => {
         row.seats.forEach((seat: Seat) => {
           if (selectedSeats.has(seat.seat_guid)) {
-            seat.status = currentStatus.toUpperCase();
+            seat.status = status.toUpperCase();
           }
         });
       });
     });
 
     setSeatData(updatedSeatData);
+    showToast(`Set ${selectedSeats.size} seat(s) to ${status}`);
     setSelectedSeats(new Set());
   };
 
@@ -1155,11 +1175,7 @@ const SeatMapEditor: React.FC = () => {
     const trimmed = newName.trim();
     const existing = seatData.categories[categoryIndex];
     if (!existing) return;
-    if (existing.name === trimmed) {
-      setEditingCategory(null);
-      setEditCategoryName('');
-      return;
-    }
+    if (existing.name === trimmed) return;
 
     // Names are the only link between seats and categories, so two categories
     // sharing one name makes colors and assignment ambiguous — block it.
@@ -1201,8 +1217,6 @@ const SeatMapEditor: React.FC = () => {
     }
 
     setSeatData(updatedSeatData);
-    setEditingCategory(null);
-    setEditCategoryName('');
   };
 
   // Update category display alias (stored as categories[].label inside the
@@ -1221,47 +1235,24 @@ const SeatMapEditor: React.FC = () => {
     });
   };
 
-  // Start editing category
-  const startEditingCategory = (categoryIndex: number, currentName: string): void => {
-    setEditingCategory(categoryIndex);
-    setEditCategoryName(currentName);
-  };
-
-  // Cancel editing category
-  const cancelEditingCategory = (): void => {
-    setEditingCategory(null);
-    setEditCategoryName('');
-  };
-
   // Show JSON output modal
   const showJSONOutput = (): void => {
     if (!seatData) return;
     setShowOutput(true);
   };
 
-  // Reset selection
-  const resetSelection = (): void => {
+  // Clear the whole selection
+  const clearSelection = (): void => {
     setSelectedSeats(new Set());
+    setSelectedObject(null);
+    setObjectProperties({});
   };
 
-  // Get seat counts by status
-  const getSeatStats = (): SeatStats => {
-    if (!seatData) return { available: 0, unavailable: 0, void: 0, sold: 0 };
-    
-    const stats: SeatStats = { available: 0, unavailable: 0, void: 0, sold: 0 };
-    
-    seatData.zones.forEach((zone: Zone) => {
-      zone.rows.forEach((row: Row) => {
-        row.seats.forEach((seat: Seat) => {
-          const status = seat.status ? seat.status.toLowerCase() : 'available';
-          if (status in stats) {
-            stats[status as keyof SeatStats]++;
-          }
-        });
-      });
-    });
-    
-    return stats;
+  // Rename the plan (from the properties panel)
+  const commitPlanName = (name: string): void => {
+    if (!seatData || !name.trim() || name.trim() === seatData.name) return;
+    beginGesture();
+    setSeatData({ ...seatData, name: name.trim() });
   };
 
   // Point-in-polygon test using ray casting algorithm (expects local coordinates)
@@ -1607,22 +1598,161 @@ const SeatMapEditor: React.FC = () => {
     }
   };
   
-  // Handle property input change
-  const handlePropertyChange = (property: string, value: string): void => {
-    setObjectProperties(prev => ({
-      ...prev,
-      [property]: isNaN(Number(value)) ? value : Number(value)
-    }));
-  };
-  
-  // Apply property changes
-  const applyPropertyChanges = (): void => {
-    if (!objectProperties || Object.keys(objectProperties).length === 0) return;
+  // ===== Editor actions: properties panel, insert tools, delete, nudge =====
 
+  // Selection mirrored in refs so stable callbacks (keyboard) see fresh state
+  const selectedObjectRef = useRef<SelectedObject | null>(null);
+  selectedObjectRef.current = selectedObject;
+  const selectedSeatsRef = useRef<Set<string>>(selectedSeats);
+  selectedSeatsRef.current = selectedSeats;
+
+  const refreshRowSelection = (next: SeatData, zoneIndex: number, rowIndex: number): void => {
+    const row = next.zones[zoneIndex].rows[rowIndex];
+    setSelectedObject({ type: 'row', id: `row-${zoneIndex}-${rowIndex}`, data: row, zoneIndex, rowIndex });
+    setSelectedSeats(new Set(row.seats.map((s: Seat) => s.seat_guid)));
+  };
+
+  // Seat/area fields from the properties panel: one gesture per commit
+  const commitObjectProp = (prop: string, value: string | number): void => {
     beginGesture();
-    Object.entries(objectProperties).forEach(([property, value]) => {
-      updateObjectProperty(property, value);
+    updateObjectProperty(prop, value);
+  };
+
+  const commitRowField = (field: 'row_number' | 'row_number_position', value: string): void => {
+    if (!seatData || selectedObject?.type !== 'row' || selectedObject.rowIndex === undefined) return;
+    beginGesture();
+    const next = structuredClone(seatData);
+    const row = next.zones[selectedObject.zoneIndex].rows[selectedObject.rowIndex];
+    if (field === 'row_number') {
+      row.row_number = value;
+    } else if (value) {
+      row.row_number_position = value;
+    } else {
+      delete row.row_number_position;
+    }
+    setSeatData(next);
+    refreshRowSelection(next, selectedObject.zoneIndex, selectedObject.rowIndex);
+  };
+
+  // Spacing / curve. gesture=false during slider drags: the gesture was opened
+  // on pointer-down, so the whole drag is one undo step with live preview.
+  const rowLayoutChange = (spacing: number, sagitta: number, gesture: boolean): void => {
+    if (!seatData || selectedObject?.type !== 'row' || selectedObject.rowIndex === undefined) return;
+    if (gesture) beginGesture();
+    const next = structuredClone(seatData);
+    const row = next.zones[selectedObject.zoneIndex].rows[selectedObject.rowIndex];
+    layoutRow(row, spacing, sagitta);
+    setSeatData(next);
+    refreshRowSelection(next, selectedObject.zoneIndex, selectedObject.rowIndex);
+  };
+
+  const rowBulk = (field: 'radius' | 'category', value: number | string): void => {
+    if (!seatData || selectedObject?.type !== 'row' || selectedObject.rowIndex === undefined) return;
+    beginGesture();
+    const next = structuredClone(seatData);
+    const row = next.zones[selectedObject.zoneIndex].rows[selectedObject.rowIndex];
+    row.seats.forEach((s: Seat) => {
+      if (field === 'radius') s.radius = value as number;
+      else s.category = value as string;
     });
+    setSeatData(next);
+    refreshRowSelection(next, selectedObject.zoneIndex, selectedObject.rowIndex);
+  };
+
+  const selectedRowLayout = useMemo(() => {
+    if (selectedObject?.type === 'row') return estimateRowLayout(selectedObject.data as Row);
+    return null;
+  }, [selectedObject, seatData]);
+
+  const deleteSelection = useCallback((): void => {
+    const data = seatDataRef.current;
+    if (!data) return;
+    const sel = selectedObjectRef.current;
+    const seats = selectedSeatsRef.current;
+
+    if (sel?.type === 'row' && sel.rowIndex !== undefined) {
+      beginGesture();
+      const next = structuredClone(data);
+      const count = deleteRowAt(next, sel.zoneIndex, sel.rowIndex);
+      setSeatData(next);
+      showToast(`Deleted row (${count} seats)`);
+    } else if (sel?.type === 'area' && sel.areaIndex !== undefined) {
+      beginGesture();
+      const next = structuredClone(data);
+      deleteAreaAt(next, sel.zoneIndex, sel.areaIndex);
+      setSeatData(next);
+      showToast('Deleted shape');
+    } else if (sel?.type === 'seat') {
+      beginGesture();
+      const next = structuredClone(data);
+      deleteSeats(next, new Set([sel.id]));
+      setSeatData(next);
+      showToast('Deleted seat');
+    } else if (seats.size > 0) {
+      beginGesture();
+      const next = structuredClone(data);
+      const removed = deleteSeats(next, seats);
+      setSeatData(next);
+      showToast(`Deleted ${removed} seat(s)`);
+    } else {
+      return;
+    }
+    setSelectedObject(null);
+    setSelectedSeats(new Set());
+    setObjectProperties({});
+  }, [beginGesture, showToast]);
+
+  // Arrow-key nudge; rapid presses share one undo step
+  const nudgeGestureAtRef = useRef<number>(0);
+  const nudgeSelection = useCallback((dx: number, dy: number): void => {
+    const data = seatDataRef.current;
+    if (!data) return;
+    const sel = selectedObjectRef.current;
+    const seats = selectedSeatsRef.current;
+    if (!sel && seats.size === 0) return;
+
+    const now = Date.now();
+    if (now - nudgeGestureAtRef.current > 800) beginGesture();
+    nudgeGestureAtRef.current = now;
+
+    const next = structuredClone(data);
+    if (sel?.type === 'row' && sel.rowIndex !== undefined) {
+      const row = next.zones[sel.zoneIndex].rows[sel.rowIndex];
+      row.position.x += dx;
+      row.position.y += dy;
+      setSeatData(next);
+      setSelectedObject({ ...sel, data: row });
+    } else if (sel?.type === 'area' && sel.areaIndex !== undefined && next.zones[sel.zoneIndex].areas) {
+      const area = next.zones[sel.zoneIndex].areas![sel.areaIndex];
+      area.position.x += dx;
+      area.position.y += dy;
+      setSeatData(next);
+      setSelectedObject({ ...sel, data: area });
+    } else if (sel?.type === 'seat' && sel.rowIndex !== undefined && sel.seatIndex !== undefined) {
+      const seat = next.zones[sel.zoneIndex].rows[sel.rowIndex].seats[sel.seatIndex];
+      seat.position.x += dx;
+      seat.position.y += dy;
+      setSeatData(next);
+      setSelectedObject({ ...sel, data: seat });
+    } else if (seats.size > 0) {
+      offsetSeats(next, seats, dx, dy);
+      setSeatData(next);
+    }
+  }, [beginGesture]);
+
+  // Insert tools: arm with options, then click the canvas to place
+  const [pendingInsert, setPendingInsert] = useState<(InsertOptions & { kind: 'row' | 'grid' }) | null>(null);
+  const [insertForm, setInsertForm] = useState({ rows: 5, seatsPerRow: 10, spacing: 28, rowSpacing: 28, radius: 10 });
+
+  const startBlankPlan = (): void => {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setHistoryVersion(v => v + 1);
+    needsFitRef.current = true;
+    setSeatData(createBlankPlan());
+    setSelectedSeats(new Set());
+    setSelectedObject(null);
+    showToast('Blank plan created — use Insert to add seats', 'info');
   };
   
   // Toggle selection mode
@@ -1666,6 +1796,20 @@ const SeatMapEditor: React.FC = () => {
         zoomAtCenter(1.25);
       } else if (e.key === '-' || e.key === '_') {
         zoomAtCenter(0.8);
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        deleteSelection();
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        nudgeSelection(dx, dy);
+      } else if (e.key === 'Escape') {
+        setPendingInsert(null);
+        setSelectedSeats(new Set());
+        setSelectedObject(null);
+        setObjectProperties({});
       }
     };
 
@@ -1679,18 +1823,8 @@ const SeatMapEditor: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [fitToContent, resetZoom, zoomAtCenter, undo, redo]);
+  }, [fitToContent, resetZoom, zoomAtCenter, undo, redo, deleteSelection, nudgeSelection]);
   
-  // Handle key press events
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (e.key === 'Enter' && editingCategory !== null) {
-      updateCategoryName(editingCategory, editCategoryName);
-    }
-    if (e.key === 'Escape') {
-      cancelEditingCategory();
-    }
-  };
-
   // Handle clipboard copy
   const handleClipboardCopy = async (): Promise<void> => {
     if (!seatData) return;
@@ -1729,396 +1863,121 @@ const SeatMapEditor: React.FC = () => {
     e.target.select();
   };
 
-  const stats = getSeatStats();
-
   return (
     <div className="w-full h-screen bg-gray-50 flex flex-col">
-      {/* Header */}
-      <div className="bg-white shadow-sm border-b p-4">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-gray-800">Seat Map Editor</h1>
-          <div className="flex items-center space-x-4">
-            <input
-              type="file"
-              accept=".json"
-              onChange={handleFileUpload}
-              ref={fileInputRef}
-              className="hidden"
-            />
-            {seatData && (
-              <div className="flex items-center border rounded-lg overflow-hidden">
-                <button
-                  onClick={undo}
-                  disabled={undoStackRef.current.length === 0}
-                  className="w-9 h-9 flex items-center justify-center hover:bg-gray-100 disabled:opacity-30"
-                  title="Undo (⌘Z)"
-                >
-                  <Undo2 className="w-4 h-4" />
-                </button>
-                <div className="w-px h-5 bg-gray-200" />
-                <button
-                  onClick={redo}
-                  disabled={redoStackRef.current.length === 0}
-                  className="w-9 h-9 flex items-center justify-center hover:bg-gray-100 disabled:opacity-30"
-                  title="Redo (⇧⌘Z)"
-                >
-                  <Redo2 className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-            {seatData && (
-              <button
-                onClick={() => setShowWizard(true)}
-                className="flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-              >
-                <Wand2 className="w-4 h-4 mr-2" />
-                Numbering
-              </button>
-            )}
+      {/* Top toolbar */}
+      <div className="bg-white border-b px-3 py-1.5 flex items-center space-x-1 flex-shrink-0">
+        <h1 className="text-sm font-bold text-gray-800 pr-2 whitespace-nowrap">Seat Map Editor</h1>
+        <input
+          type="file"
+          accept=".json"
+          onChange={handleFileUpload}
+          ref={fileInputRef}
+          className="hidden"
+        />
+        {seatData && (
+          <>
+            <div className="w-px h-6 bg-gray-200 mx-1" />
             <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              onClick={() => toggleSelectionMode('area')}
+              className={`w-9 h-9 flex items-center justify-center rounded-lg ${selectionMode === 'area' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
+              title="Select seats by dragging (S)"
             >
-              <Upload className="w-4 h-4 mr-2" />
-              Upload JSON
+              <Grid3X3 className="w-4 h-4" />
             </button>
-            {seatData && (
-              <button
-                onClick={showJSONOutput}
-                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-              >
-                <Copy className="w-4 h-4 mr-2" />
-                Show JSON Output
-              </button>
-            )}
-          </div>
-        </div>
+            <button
+              onClick={() => toggleSelectionMode('row')}
+              className={`w-9 h-9 flex items-center justify-center rounded-lg ${selectionMode === 'row' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
+              title="Select rows (R)"
+            >
+              <Rows className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => toggleSelectionMode('object')}
+              className={`w-9 h-9 flex items-center justify-center rounded-lg ${selectionMode === 'object' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
+              title="Select a seat or shape (A)"
+            >
+              <MousePointer className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setIsMoveEnabled(prev => !prev)}
+              className={`w-9 h-9 flex items-center justify-center rounded-lg ${isMoveEnabled ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}`}
+              title="Move objects by dragging"
+            >
+              <Move className="w-4 h-4" />
+            </button>
+            <div className="w-px h-6 bg-gray-200 mx-1" />
+            <button
+              onClick={() => setShowInsertModal(true)}
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100"
+              title="Insert seat block"
+            >
+              <Armchair className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setShowWizard(true)}
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100"
+              title="Numbering & labels"
+            >
+              <Wand2 className="w-4 h-4" />
+            </button>
+            <div className="w-px h-6 bg-gray-200 mx-1" />
+            <button
+              onClick={undo}
+              disabled={undoStackRef.current.length === 0}
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 disabled:opacity-30"
+              title="Undo (⌘Z)"
+            >
+              <Undo2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={redo}
+              disabled={redoStackRef.current.length === 0}
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 disabled:opacity-30"
+              title="Redo (⇧⌘Z)"
+            >
+              <Redo2 className="w-4 h-4" />
+            </button>
+          </>
+        )}
+        <div className="flex-1" />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          <Upload className="w-4 h-4 mr-1.5" />
+          Upload JSON
+        </button>
+        {seatData && (
+          <button
+            onClick={showJSONOutput}
+            className="flex items-center px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors ml-2"
+          >
+            <Copy className="w-4 h-4 mr-1.5" />
+            Export JSON
+          </button>
+        )}
       </div>
-
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <div className="w-80 bg-white border-r p-4 overflow-y-auto">
-          <div className="space-y-6">
-            {/* Selection Mode Toggle */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3">Selection Mode</h3>
-              <div className="flex space-x-2 mb-4">
-                <button
-                  onClick={() => toggleSelectionMode('area')}
-                  className={`flex-1 py-2 px-2 rounded-lg ${selectionMode === 'area' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-                  title="Area Selection: Select multiple seats by dragging (Shortcut: S)"
-                >
-                  <div className="flex flex-col items-center justify-center">
-                    <Grid3X3 className="w-5 h-5 mb-1" />
-                    <span className="text-xs">Area (S)</span>
-                  </div>
-                </button>
-                <button
-                  onClick={() => toggleSelectionMode('row')}
-                  className={`flex-1 py-2 px-2 rounded-lg ${selectionMode === 'row' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-                  title="Row Selection: Select and edit row properties (Shortcut: R)"
-                >
-                  <div className="flex flex-col items-center justify-center">
-                    <Rows className="w-5 h-5 mb-1" />
-                    <span className="text-xs">Row (R)</span>
-                  </div>
-                </button>
-                <button
-                  onClick={() => toggleSelectionMode('object')}
-                  className={`flex-1 py-2 px-2 rounded-lg ${selectionMode === 'object' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-                  title="Object Selection: Select individual seats or areas (Shortcut: A)"
-                >
-                  <div className="flex flex-col items-center justify-center">
-                    <MousePointer className="w-5 h-5 mb-1" />
-                    <span className="text-xs">Object (A)</span>
-                  </div>
-                </button>
-              </div>
-              <div className="mb-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">Enable Movement</span>
-                  <button
-                    onClick={() => setIsMoveEnabled(prev => !prev)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
-                      isMoveEnabled ? 'bg-purple-600' : 'bg-gray-200'
-                    }`}
-                    title="Toggle direct object movement"
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        isMoveEnabled ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-            </div>
-            
-            {/* Object Properties */}
-            {(selectionMode === 'object' || selectionMode === 'row') && selectedObject && (
-              <div className="mb-4">
-                <h3 className="text-lg font-semibold mb-3">Object Properties</h3>
-                <div className="space-y-3 border rounded-lg p-3">
-                  <div className="text-sm font-medium text-gray-700">
-                    Type: {selectedObject.type.charAt(0).toUpperCase() + selectedObject.type.slice(1)}
-                  </div>
-                  
-                  {Object.entries(objectProperties).map(([property, value]) => (
-                    <div key={property} className="grid grid-cols-3 gap-2 items-center">
-                      <label className="text-sm font-medium text-gray-700 col-span-1 capitalize">
-                        {property.replace('_', ' ')}:
-                      </label>
-                      <input
-                        type={typeof value === 'number' ? 'number' : 'text'}
-                        value={value != null ? value.toString() : ''}
-                        onChange={(e) => handlePropertyChange(property, e.target.value)}
-                        className="col-span-2 px-2 py-1 text-sm border rounded"
-                      />
-                    </div>
-                  ))}
-                  
-                  <button
-                    onClick={applyPropertyChanges}
-                    className="w-full mt-2 flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    <Save className="w-4 h-4 mr-2" />
-                    Apply Changes
-                  </button>
-                </div>
-              </div>
-            )}
-            
-            {/* Status Selection */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3">Status Update</h3>
-              <select
-                value={currentStatus}
-                onChange={(e) => setCurrentStatus(e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded-lg"
-              >
-                <option value="available">Available</option>
-                <option value="unavailable">Unavailable</option>
-                <option value="void">Void</option>
-                <option value="sold">Sold</option>
-              </select>
-              
-              <div className="mt-3 space-y-2">
-                <button
-                  onClick={updateSelectedSeatsStatus}
-                  disabled={selectedSeats.size === 0}
-                  className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors"
-                >
-                  <Save className="w-4 h-4 mr-2" />
-                  Update {selectedSeats.size} Selected Seat(s)
-                </button>
-                
-                <button
-                  onClick={resetSelection}
-                  disabled={selectedSeats.size === 0}
-                  className="w-full flex items-center justify-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:bg-gray-400 transition-colors"
-                >
-                  <RotateCcw className="w-4 h-4 mr-2" />
-                  Clear Selection
-                </button>
-              </div>
-            </div>
-
-            {/* Legend */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3">Status Legend</h3>
-              <div className="space-y-2">
-                {Object.entries(statusConfig).map(([status, config]) => (
-                  <div key={status} className="flex items-center space-x-3">
-                    <div
-                      className="w-6 h-6 rounded-full border-2"
-                      style={{
-                        backgroundColor: '#cccccc',
-                        borderColor: config.outline,
-                        borderWidth: config.width
-                      }}
-                    />
-                    <span className="capitalize">{status}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Statistics */}
-            {seatData && (
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Seat Statistics</h3>
-                <div className="space-y-2">
-                  {Object.entries(stats).map(([status, count]) => (
-                    <div key={status} className="flex justify-between">
-                      <span className="capitalize">{status}:</span>
-                      <span className="font-semibold">{count}</span>
-                    </div>
-                  ))}
-                  <div className="border-t pt-2 flex justify-between font-bold">
-                    <span>Total:</span>
-                    <span>{Object.values(stats).reduce((a, b) => a + b, 0)}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Categories */}
-            {seatData?.categories && (
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Categories</h3>
-                <p className="text-xs text-gray-500 mb-2">
-                  Display name is stored in the file and survives ticket-UUID changes. The UUID below it is what TipTip reads — swap it per show.
-                </p>
-                <div className="space-y-3">
-                  {seatData.categories.map((category: Category, idx: number) => (
-                    <div key={idx} className="p-2 border rounded-lg space-y-1.5">
-                      <div className="flex items-center space-x-2">
-                        <div
-                          className="w-5 h-5 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: category.color }}
-                        />
-                        <input
-                          key={`${idx}:${category.label ?? ''}`}
-                          type="text"
-                          defaultValue={category.label ?? ''}
-                          placeholder="Display name (e.g. VIP)…"
-                          onBlur={(e) => updateCategoryLabel(idx, e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                          }}
-                          className="flex-1 min-w-0 px-2 py-1 text-sm font-medium border border-transparent hover:border-gray-300 focus:border-blue-400 rounded outline-none"
-                        />
-                        <span className="text-xs text-gray-500 whitespace-nowrap">
-                          {categoryCounts.get(category.name) || 0} seats
-                        </span>
-                      </div>
-                      {editingCategory === idx ? (
-                        <div className="flex items-center space-x-2 pl-7">
-                          <input
-                            type="text"
-                            value={editCategoryName}
-                            onChange={(e) => setEditCategoryName(e.target.value)}
-                            className="flex-1 min-w-0 px-2 py-1 text-xs font-mono border rounded"
-                            autoFocus
-                            onKeyPress={handleKeyPress}
-                          />
-                          <button
-                            onClick={() => updateCategoryName(idx, editCategoryName)}
-                            className="p-1 text-green-600 hover:bg-green-100 rounded"
-                          >
-                            <Check className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={cancelEditingCategory}
-                            className="p-1 text-red-600 hover:bg-red-100 rounded"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-between pl-7">
-                          <span className="text-xs font-mono text-gray-500 break-all" title="Ticket UUID (category name read by TipTip)">
-                            {category.name}
-                          </span>
-                          <button
-                            onClick={() => startEditingCategory(idx, category.name)}
-                            className="p-1 text-blue-600 hover:bg-blue-100 rounded ml-2 flex-shrink-0"
-                            title="Edit ticket UUID"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      )}
-                      {selectedSeats.size > 0 && (
-                        <button
-                          onClick={() => assignCategoryToSelection(idx)}
-                          className="w-full mt-1 px-2 py-1.5 text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 transition-colors"
-                        >
-                          Assign {selectedSeats.size} selected seat(s)
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
         {/* Canvas Area */}
         <div className="flex-1 p-4 flex flex-col min-h-0 min-w-0 overflow-hidden">
           {seatData ? (
-            <div className="bg-white rounded-lg shadow-sm border flex-1 flex flex-col min-h-0">
-              <div className="p-4 border-b">
-                {editingTitle ? (
-                  <div className="flex items-center space-x-2 mb-2">
-                    <input
-                      type="text"
-                      value={editTitle}
-                      onChange={(e) => setEditTitle(e.target.value)}
-                      className="flex-1 px-3 py-2 text-xl font-semibold border rounded"
-                      autoFocus
-                      onKeyPress={(e) => {
-                        if (e.key === 'Enter') {
-                          if (editTitle.trim()) {
-                            beginGesture();
-                            setSeatData({...seatData, name: editTitle.trim()});
-                            setEditingTitle(false);
-                          }
-                        }
-                      }}
-                    />
-                    <button
-                      onClick={() => {
-                        if (editTitle.trim()) {
-                          beginGesture();
-                          setSeatData({...seatData, name: editTitle.trim()});
-                          setEditingTitle(false);
-                        }
-                      }}
-                      className="p-2 text-green-600 hover:bg-green-100 rounded"
-                    >
-                      <Check className="w-5 h-5" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        setEditingTitle(false);
-                        setEditTitle(seatData.name);
-                      }}
-                      className="p-2 text-red-600 hover:bg-red-100 rounded"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between mb-2">
-                    <h2 className="text-xl font-semibold">{seatData.name}</h2>
-                    <button
-                      onClick={() => {
-                        setEditTitle(seatData.name);
-                        setEditingTitle(true);
-                      }}
-                      className="p-1 text-blue-600 hover:bg-blue-100 rounded"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-                <p className="text-gray-600 text-sm mt-1">
-                  Drag to select seats &middot; Scroll to pan &middot; Pinch or &#8984;/Ctrl + scroll to zoom &middot; Space or middle-click + drag to pan
-                </p>
-              </div>
-              <div ref={containerRef} className="relative flex-1 min-h-0 overflow-hidden bg-gray-100 rounded-b-lg">
+            <div ref={containerRef} className="relative flex-1 min-h-0 overflow-hidden bg-gray-100">
                 <canvas
                   ref={canvasRef}
                   className={`absolute inset-0 ${
-                    isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'
+                    pendingInsert ? 'cursor-copy' : isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'
                   }`}
                   onMouseDown={handleMouseDown}
                   onMouseMove={handleMouseMove}
                   onMouseUp={handleMouseUp}
                   onMouseLeave={handleMouseUp}
                 />
+                {pendingInsert && (
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
+                    Click on the canvas to place · Esc to cancel
+                  </div>
+                )}
                 {/* Zoom toolbar */}
                 <div className="absolute bottom-4 right-4 flex items-center bg-white border shadow-md rounded-lg overflow-hidden">
                   <button
@@ -2152,7 +2011,6 @@ const SeatMapEditor: React.FC = () => {
                   </button>
                 </div>
               </div>
-            </div>
           ) : (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
@@ -2163,16 +2021,64 @@ const SeatMapEditor: React.FC = () => {
                 <p className="text-gray-500 mb-4">
                   Upload a JSON file to start editing seat statuses
                 </p>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Upload JSON File
-                </button>
+                <div className="flex items-center justify-center space-x-3">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    Upload JSON File
+                  </button>
+                  <button
+                    onClick={startBlankPlan}
+                    className="px-6 py-3 bg-white text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
+                  >
+                    Start Blank Plan
+                  </button>
+                </div>
               </div>
             </div>
           )}
         </div>
+
+        {/* Contextual properties panel (pretix-style) */}
+        {seatData && (
+          <PropertiesPanel
+            seatData={seatData}
+            selectedObject={selectedObject}
+            selectedSeats={selectedSeats}
+            rowLayout={selectedRowLayout}
+            categoryCounts={categoryCounts}
+            callbacks={{
+              commitObjectProp,
+              commitRowField,
+              rowLayoutStart: beginGesture,
+              rowLayoutChange,
+              rowBulk,
+              deleteSelection,
+              commitPlanName,
+              applyStatus: applyStatusToSelection,
+              clearSelection,
+              assignCategory: assignCategoryToSelection,
+              updateCategoryLabel,
+              updateCategoryName,
+            }}
+          />
+        )}
+      </div>
+
+      {/* Status bar */}
+      <div className="bg-white border-t px-3 py-1 text-xs text-gray-500 flex items-center justify-between flex-shrink-0">
+        <span>
+          {pendingInsert
+            ? 'Click on the canvas to place the seat block · Esc to cancel'
+            : selectionMode === 'area'
+            ? 'Drag to select seats'
+            : selectionMode === 'row'
+            ? 'Click a seat to select its row'
+            : 'Click a seat or shape to select it'}
+          {' · Scroll to pan · Pinch or ⌘/Ctrl + scroll to zoom · Space or middle-click + drag to pan'}
+        </span>
+        <span className="hidden md:inline">S / R / A modes · F fit · 0 reset zoom · ⌘Z undo</span>
       </div>
 
       {/* JSON Output Modal */}
@@ -2233,6 +2139,57 @@ const SeatMapEditor: React.FC = () => {
                   💡 Tip: Click in the text area and press Ctrl+A to select all, then Ctrl+C to copy
                 </span>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Insert seats modal */}
+      {showInsertModal && seatData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg w-full max-w-sm">
+            <div className="flex items-center justify-between p-4 border-b bg-gray-50 rounded-t-lg">
+              <h3 className="text-base font-semibold">Insert seats</h3>
+              <button onClick={() => setShowInsertModal(false)} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 grid grid-cols-2 gap-3">
+              {([
+                ['rows', 'Rows'],
+                ['seatsPerRow', 'Seats per row'],
+                ['spacing', 'Seat spacing'],
+                ['rowSpacing', 'Row spacing'],
+                ['radius', 'Seat radius'],
+              ] as [keyof typeof insertForm, string][]).map(([key, label]) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={insertForm[key]}
+                    onChange={(e) => setInsertForm(prev => ({ ...prev, [key]: Math.max(1, parseInt(e.target.value, 10) || 1) }))}
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-end space-x-2 p-4 border-t bg-gray-50 rounded-b-lg">
+              <button
+                onClick={() => setShowInsertModal(false)}
+                className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setPendingInsert({ ...insertForm, kind: 'grid', category: '' });
+                  setShowInsertModal(false);
+                }}
+                className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+              >
+                Place on canvas
+              </button>
             </div>
           </div>
         </div>
