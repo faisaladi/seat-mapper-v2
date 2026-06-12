@@ -73,6 +73,9 @@ const SeatMapEditor: React.FC = () => {
   const shapeDraftRef = useRef<{ start: Position; end: Position } | null>(null);
   const pendingShapeRef = useRef<ShapeKind | null>(null);
   pendingShapeRef.current = pendingShape;
+  // Multi-select: drag-moving a whole seat selection, and additive marquee (shift)
+  const groupDragRef = useRef<{ lastX: number; lastY: number } | null>(null);
+  const marqueeAdditiveRef = useRef<boolean>(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showWizard, setShowWizard] = useState<boolean>(false);
@@ -384,6 +387,31 @@ const SeatMapEditor: React.FC = () => {
       }
     }
 
+    // Multi-seat selection: shift-click toggles a seat; pressing a seat that's
+    // already part of a multi-selection drags the whole set. Works in area and
+    // object modes (row mode keeps its row-select behavior).
+    if (selectionMode !== 'row') {
+      const hit = findObjectAtPosition(x, y);
+      if (e.shiftKey && hit?.type === 'seat') {
+        // Functional update so rapid shift-clicks accumulate correctly
+        setSelectedSeats(prev => {
+          const nextSel = new Set(prev);
+          if (nextSel.has(hit.id)) nextSel.delete(hit.id);
+          else nextSel.add(hit.id);
+          selectedSeatsRef.current = nextSel;
+          return nextSel;
+        });
+        setSelectedObject(null);
+        setObjectProperties({});
+        return;
+      }
+      if (hit?.type === 'seat' && selectedSeats.size > 1 && selectedSeats.has(hit.id)) {
+        beginGesture();
+        groupDragRef.current = { lastX: x, lastY: y };
+        return;
+      }
+    }
+
     if (selectionMode === 'area') {
       // Check if we're clicking on a selected object first
       if (selectedObject && isMoveEnabled) {
@@ -419,12 +447,14 @@ const SeatMapEditor: React.FC = () => {
         }
       }
       
-      // If not dragging an object, start area selection
+      // If not dragging an object, start area selection. Shift = add to the
+      // existing selection instead of replacing it.
+      marqueeAdditiveRef.current = e.shiftKey;
       setIsDragging(true);
       setDragStart({ x, y });
       setDragEnd({ x, y });
       setSelectedObject(null);
-      setSelectedSeats(new Set());
+      if (!e.shiftKey) setSelectedSeats(new Set());
     } else if (selectionMode === 'row') {
       // Find seat under cursor to identify the row
       const object = findObjectAtPosition(x, y);
@@ -530,6 +560,17 @@ const SeatMapEditor: React.FC = () => {
         setSeatData(next);
         setSelectedObject({ type: 'area', id: selectedObject?.id ?? `area-${zoneIndex}-${areaIndex}`, data: area, zoneIndex, areaIndex });
       }
+      return;
+    }
+
+    // Group drag: move the whole seat selection by the incremental delta
+    if (groupDragRef.current) {
+      const dx = x - groupDragRef.current.lastX;
+      const dy = y - groupDragRef.current.lastY;
+      groupDragRef.current = { lastX: x, lastY: y };
+      const next = structuredClone(seatData);
+      offsetSeats(next, selectedSeats, dx, dy);
+      setSeatData(next);
       return;
     }
 
@@ -661,6 +702,7 @@ const SeatMapEditor: React.FC = () => {
       setObjectProperties(getObjectProperties(selectedObject));
     }
     resizeRef.current = null;
+    groupDragRef.current = null;
     if (isDragging && dragStart && dragEnd) {
       selectSeatsInArea();
     }
@@ -680,14 +722,15 @@ const SeatMapEditor: React.FC = () => {
     const minY = Math.min(dragStart.y, dragEnd.y);
     const maxY = Math.max(dragStart.y, dragEnd.y);
 
-    const newSelectedSeats = new Set<string>();
+    // Additive marquee (shift) unions with the current selection
+    const newSelectedSeats = marqueeAdditiveRef.current ? new Set(selectedSeats) : new Set<string>();
 
     seatData.zones.forEach((zone: Zone) => {
       [...zone.rows].reverse().forEach((row: Row) => {
         [...row.seats].reverse().forEach((seat: Seat) => {
           const seatX = seat.position.x + zone.position.x + row.position.x;
           const seatY = seat.position.y + zone.position.y + row.position.y;
-          
+
           if (seatX >= minX && seatX <= maxX && seatY >= minY && seatY <= maxY) {
             newSelectedSeats.add(seat.seat_guid);
           }
@@ -695,6 +738,7 @@ const SeatMapEditor: React.FC = () => {
       });
     });
 
+    marqueeAdditiveRef.current = false;
     setSelectedSeats(newSelectedSeats);
   };
 
@@ -1753,10 +1797,10 @@ const SeatMapEditor: React.FC = () => {
           {pendingInsert
             ? 'Click on the canvas to place the seat block · Esc to cancel'
             : selectionMode === 'area'
-            ? 'Drag to select seats'
+            ? 'Drag to select seats · Shift-click adds/removes · Shift-drag extends · drag a selected seat to move the group'
             : selectionMode === 'row'
             ? 'Click a seat to select its row'
-            : 'Click a seat or shape to select it'}
+            : 'Click a seat or shape to select it · Shift-click seats for multi-select'}
           {' · Scroll to pan · Pinch or ⌘/Ctrl + scroll to zoom · Space or middle-click + drag to pan'}
         </span>
         <span className="hidden md:inline">S / R / A modes · F fit · 0 reset zoom · ⌘Z undo</span>
