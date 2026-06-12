@@ -27,6 +27,18 @@ import { paintScene } from './engine/render';
 import { findObjectAtPosition as hitTest } from './engine/hit-test';
 import { useHistory } from './engine/useHistory';
 import { useViewport } from './engine/useViewport';
+import {
+  areaToBox,
+  handleWorldPositions,
+  hitHandle,
+  resizeBox,
+  applyBoxToArea,
+  isResizable,
+  isUniform,
+  handleCursor,
+  type HandleId,
+  type TransformBox,
+} from './engine/transform';
 
 interface Toast {
   message: string;
@@ -47,6 +59,10 @@ const SeatMapEditor: React.FC = () => {
   const [showInsertModal, setShowInsertModal] = useState<boolean>(false);
   const [isDraggingObject, setIsDraggingObject] = useState<boolean>(false);
   const [dragOffset, setDragOffset] = useState<Position | null>(null);
+  // On-canvas resize gesture for a selected shape (engine/transform). The
+  // original box is captured at mousedown so opposite-corner math is stable.
+  const resizeRef = useRef<{ handle: HandleId; box: TransformBox; zoneIndex: number; areaIndex: number; uniform: boolean } | null>(null);
+  const [hoverCursor, setHoverCursor] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showWizard, setShowWizard] = useState<boolean>(false);
@@ -318,6 +334,24 @@ const SeatMapEditor: React.FC = () => {
       return;
     }
 
+    // Grab a resize handle of the selected shape (takes priority over move/select)
+    if (selectedObject?.type === 'area' && selectedObject.areaIndex !== undefined) {
+      const zone = seatData.zones[selectedObject.zoneIndex];
+      const area = zone.areas?.[selectedObject.areaIndex];
+      if (area && isResizable(area)) {
+        const box = areaToBox(area, zone.position.x, zone.position.y);
+        if (box) {
+          const tol = 9 / viewRef.current.scale;
+          const handle = hitHandle(box, x, y, tol, isUniform(area));
+          if (handle) {
+            beginGesture();
+            resizeRef.current = { handle, box, zoneIndex: selectedObject.zoneIndex, areaIndex: selectedObject.areaIndex, uniform: isUniform(area) };
+            return;
+          }
+        }
+      }
+    }
+
     if (selectionMode === 'area') {
       // Check if we're clicking on a selected object first
       if (selectedObject && isMoveEnabled) {
@@ -442,6 +476,39 @@ const SeatMapEditor: React.FC = () => {
 
     const { x, y } = screenToWorld(e.clientX, e.clientY);
 
+    // Active resize gesture: recompute the box from the captured original
+    if (resizeRef.current) {
+      const { handle, box, zoneIndex, areaIndex, uniform } = resizeRef.current;
+      const next = structuredClone(seatData);
+      const zone = next.zones[zoneIndex];
+      const area = zone.areas?.[areaIndex];
+      if (area) {
+        const minSize = 4;
+        const newBox = resizeBox(box, handle, x, y, uniform, minSize);
+        applyBoxToArea(area, newBox, zone.position.x, zone.position.y);
+        setSeatData(next);
+        setSelectedObject({ type: 'area', id: selectedObject?.id ?? `area-${zoneIndex}-${areaIndex}`, data: area, zoneIndex, areaIndex });
+      }
+      return;
+    }
+
+    // Hover feedback: show a resize cursor over a selected shape's handles
+    if (!isDragging && !isDraggingObject && selectedObject?.type === 'area' && selectedObject.areaIndex !== undefined) {
+      const zone = seatData.zones[selectedObject.zoneIndex];
+      const area = zone.areas?.[selectedObject.areaIndex];
+      const box = area && isResizable(area) ? areaToBox(area, zone.position.x, zone.position.y) : null;
+      if (box && area) {
+        const tol = 9 / viewRef.current.scale;
+        const h = hitHandle(box, x, y, tol, isUniform(area));
+        const cur = h ? handleCursor(h, box.rot) : null;
+        if (cur !== hoverCursor) setHoverCursor(cur);
+      } else if (hoverCursor) {
+        setHoverCursor(null);
+      }
+    } else if (hoverCursor && !resizeRef.current) {
+      setHoverCursor(null);
+    }
+
     if (isDragging) {
       setDragEnd({ x, y });
     } else if (isDraggingObject && selectedObject && dragOffset && isMoveEnabled) {
@@ -517,6 +584,11 @@ const SeatMapEditor: React.FC = () => {
       panLastRef.current = null;
       setIsPanning(false);
     }
+    if (resizeRef.current && selectedObject) {
+      // Sync the panel's dimension fields to the resized shape
+      setObjectProperties(getObjectProperties(selectedObject));
+    }
+    resizeRef.current = null;
     if (isDragging && dragStart && dragEnd) {
       selectSeatsInArea();
     }
@@ -716,6 +788,21 @@ const SeatMapEditor: React.FC = () => {
                 ctx.closePath();
                 ctx.stroke();
                 ctx.restore();
+            }
+
+            // Resize handles for parametric shapes (rect / circle / ellipse)
+            if (isResizable(area)) {
+                const box = areaToBox(area, zone.position.x, zone.position.y);
+                if (box) {
+                    const hs = 4 / view.scale; // half handle size, screen-constant
+                    ctx.fillStyle = '#ffffff';
+                    ctx.strokeStyle = '#fbbf24';
+                    ctx.lineWidth = 1.5 / view.scale;
+                    for (const h of handleWorldPositions(box, isUniform(area))) {
+                        ctx.fillRect(h.x - hs, h.y - hs, hs * 2, hs * 2);
+                        ctx.strokeRect(h.x - hs, h.y - hs, hs * 2, hs * 2);
+                    }
+                }
             }
         }
     }
@@ -1457,6 +1544,7 @@ const SeatMapEditor: React.FC = () => {
                   className={`absolute inset-0 ${
                     pendingInsert ? 'cursor-copy' : isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'
                   }`}
+                  style={hoverCursor ? { cursor: hoverCursor } : undefined}
                   onMouseDown={handleMouseDown}
                   onMouseMove={handleMouseMove}
                   onMouseUp={handleMouseUp}
