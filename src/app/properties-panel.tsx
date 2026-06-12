@@ -42,6 +42,9 @@ const STATUS_META: { key: string; label: string; outline: string }[] = [
   { key: 'sold', label: 'Sold', outline: '#000000' },
 ];
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isValidUUID = (s: string): boolean => UUID_RE.test(s.trim());
+
 const fieldCls = 'w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg bg-white';
 const labelCls = 'block text-xs font-medium text-gray-500 mb-1';
 const sectionCls = 'text-sm font-semibold text-gray-800 pb-1.5 border-b';
@@ -395,63 +398,75 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
           <p className="text-xs text-gray-500">
             Display name is stored in the file and survives ticket-UUID changes. The UUID below it is what TipTip reads — swap it per show.
           </p>
-          {seatData.categories.map((category: Category, idx: number) => (
-            <div key={idx} className="p-2 border rounded-lg space-y-1">
-              <div className="flex items-center space-x-2">
-                <span className="w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: category.color }} />
-                <input
-                  key={`${idx}:${category.label ?? ''}`}
-                  type="text"
-                  defaultValue={category.label ?? ''}
-                  placeholder="Display name (e.g. VIP)…"
-                  onBlur={(e) => callbacks.updateCategoryLabel(idx, e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                  className="flex-1 min-w-0 px-1.5 py-1 text-sm font-medium border border-transparent hover:border-gray-300 focus:border-blue-400 rounded outline-none"
-                />
-                <span className="text-xs text-gray-400 whitespace-nowrap">{categoryCounts.get(category.name) || 0}</span>
-              </div>
-              {editingCat === idx ? (
-                <div className="flex items-center space-x-1 pl-6">
+          {seatData.categories.map((category: Category, idx: number) => {
+            const isEditing = editingCat === idx;
+            const valid = isEditing ? isValidUUID(editCatName) : true;
+            const commit = (): void => {
+              if (!valid) return;
+              callbacks.updateCategoryName(idx, editCatName);
+              setEditingCat(null);
+            };
+            return (
+              <div key={idx} className="p-2 border rounded-lg space-y-1">
+                <div className="flex items-center space-x-2">
+                  <span className="w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: category.color }} />
                   <input
+                    key={`${idx}:${category.label ?? ''}`}
                     type="text"
-                    value={editCatName}
-                    onChange={(e) => setEditCatName(e.target.value)}
-                    className="flex-1 min-w-0 px-1.5 py-1 text-xs font-mono border rounded"
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        callbacks.updateCategoryName(idx, editCatName);
-                        setEditingCat(null);
-                      }
-                      if (e.key === 'Escape') setEditingCat(null);
-                    }}
+                    defaultValue={category.label ?? ''}
+                    placeholder="Display name (e.g. VIP)…"
+                    onBlur={(e) => callbacks.updateCategoryLabel(idx, e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    className="flex-1 min-w-0 px-1.5 py-1 text-sm font-medium border border-transparent hover:border-gray-300 focus:border-blue-400 rounded outline-none"
                   />
-                  <button
-                    onClick={() => { callbacks.updateCategoryName(idx, editCatName); setEditingCat(null); }}
-                    className="p-1 text-green-600 hover:bg-green-100 rounded"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                  </button>
-                  <button onClick={() => setEditingCat(null)} className="p-1 text-red-600 hover:bg-red-100 rounded">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                  <span className="text-xs text-gray-400 whitespace-nowrap">{categoryCounts.get(category.name) || 0}</span>
                 </div>
-              ) : (
-                <div className="flex items-center justify-between pl-6">
-                  <span className="text-xs font-mono text-gray-400 break-all" title="Ticket UUID (category name read by TipTip)">
-                    {category.name}
-                  </span>
-                  <button
-                    onClick={() => { setEditingCat(idx); setEditCatName(category.name); }}
-                    className="p-1 text-blue-600 hover:bg-blue-100 rounded ml-1 flex-shrink-0"
-                    title="Edit ticket UUID"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
+                {isEditing ? (
+                  <div className="flex flex-col pl-6 space-y-1">
+                    <div className="flex items-center space-x-1">
+                      <input
+                        type="text"
+                        value={editCatName}
+                        onChange={(e) => setEditCatName(e.target.value.replace(/\s/g, ''))}
+                        className={`flex-1 min-w-0 px-1.5 py-1 text-xs font-mono border rounded ${valid ? 'border-gray-300' : 'border-red-400 bg-red-50'}`}
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') commit();
+                          if (e.key === 'Escape') setEditingCat(null);
+                        }}
+                      />
+                      <button
+                        onClick={commit}
+                        disabled={!valid}
+                        className="p-1 text-green-600 hover:bg-green-100 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => setEditingCat(null)} className="p-1 text-red-600 hover:bg-red-100 rounded">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {!valid && (
+                      <p className="text-xs text-red-500">Must be a valid UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between pl-6">
+                    <span className="text-xs font-mono text-gray-400 break-all" title="Ticket UUID (category name read by TipTip)">
+                      {category.name}
+                    </span>
+                    <button
+                      onClick={() => { setEditingCat(idx); setEditCatName(category.name); }}
+                      className="p-1 text-blue-600 hover:bg-blue-100 rounded ml-1 flex-shrink-0"
+                      title="Edit ticket UUID"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         <p className="text-xs text-gray-500">

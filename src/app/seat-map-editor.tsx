@@ -1170,10 +1170,16 @@ const SeatMapEditor: React.FC = () => {
     requestRedraw();
   }, [draw, requestRedraw]);
 
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
   // Update category name (= ticket UUID) by index
   const updateCategoryName = (categoryIndex: number, newName: string): void => {
     if (!seatData || !newName.trim()) return;
     const trimmed = newName.trim();
+    if (!UUID_RE.test(trimmed)) {
+      showToast('Category name must be a valid UUID (no spaces, correct format).', 'error');
+      return;
+    }
     const existing = seatData.categories[categoryIndex];
     if (!existing) return;
     if (existing.name === trimmed) return;
