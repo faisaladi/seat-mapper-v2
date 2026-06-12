@@ -65,7 +65,7 @@ Maps to the pretix toolbar: select / row-select / seat-grid / single-seat / shap
 | X6 | **Copy / paste / duplicate** | Within and across zones; pasted seats get fresh uuids/guids; smart label offset (paste row "A" → suggest "B"). | P1 | M |
 | X7 | **Snap & grid** ✅ shipped | Toolbar grid toggle (renders a 25-unit grid behind content, auto-hidden when too dense). `engine/snap.ts`: per-axis snap to the nearest peer object coordinate (seat + shape centers, deduped to unique values) within tolerance, falling back to grid when enabled; pink alignment guides drawn while snapped. Wired into single-object move, seat group move, and shape drawing. Verified in-browser (seat snapped to a peer column with guide + grid on the other axis). Remaining: edge/midpoint alignment (not just centers), snap during resize. | P1 | S |
 | X8 | **Zones management** | Create/rename/reorder zones (floors), move selection between zones, per-zone visibility toggle. | P2 | M |
-| X9 | **Plan settings panel** | Name (exists), width/height editing, "trim canvas size to content" action, total seat count. | P2 | XS |
+| X9 | **Plan settings panel** 🟡 | ✅ Name, ✅ canvas width/height editing, ✅ total seat count + status breakdown. ✅ **True canvas visualization** (June 2026): the white card is now the JSON `size` rect (0,0,w,h) and everything paints at its real coordinates — matches what TipTip renders, instead of hugging the content bbox. Viewport `bounds` = canvas ∪ content so off-canvas content stays reachable. Remaining: "trim canvas to content" action. | P2 | XS |
 
 ---
 

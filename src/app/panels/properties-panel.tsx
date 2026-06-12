@@ -1,6 +1,6 @@
 'use client';
 import React, { useRef, useState } from 'react';
-import { Trash2, Check, X, Edit2, Plus, BringToFront, SendToBack } from 'lucide-react';
+import { Trash2, Check, X, Edit2, Plus, BringToFront, SendToBack, ChevronUp, ChevronDown } from 'lucide-react';
 import type { SeatData, SelectedObject, Seat, Row, Area, Category, Zone } from '../model/types';
 import type { RowLayout } from '../model/ops';
 import { estimateSelectionSagitta } from '../model/ops';
@@ -17,6 +17,7 @@ export interface PanelCallbacks {
   rowBulk: (field: 'radius' | 'category', value: number | string) => void;
   deleteSelection: () => void;
   commitPlanName: (name: string) => void;
+  commitCanvasSize: (dim: 'width' | 'height', value: number) => void;
   applyStatus: (status: string) => void;
   clearSelection: () => void;
   assignCategory: (categoryIndex: number) => void;
@@ -283,19 +284,22 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
         )}
         <div>
           <label className={labelCls}>Arrange <span className="font-normal text-gray-400">(seats stay in front)</span></label>
-          <div className="grid grid-cols-2 gap-2">
-            <button onClick={() => callbacks.arrangeArea('front')} className="flex items-center justify-center px-2 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-100">
-              <BringToFront className="w-3.5 h-3.5 mr-1.5" /> To front
-            </button>
-            <button onClick={() => callbacks.arrangeArea('back')} className="flex items-center justify-center px-2 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-100">
-              <SendToBack className="w-3.5 h-3.5 mr-1.5" /> To back
-            </button>
-            <button onClick={() => callbacks.arrangeArea('forward')} className="flex items-center justify-center px-2 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-100">
-              Forward
-            </button>
-            <button onClick={() => callbacks.arrangeArea('backward')} className="flex items-center justify-center px-2 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-100">
-              Backward
-            </button>
+          <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden divide-x">
+            {([
+              ['back', SendToBack, 'Send to back'],
+              ['backward', ChevronDown, 'Send backward'],
+              ['forward', ChevronUp, 'Bring forward'],
+              ['front', BringToFront, 'Bring to front'],
+            ] as [ 'front' | 'back' | 'forward' | 'backward', typeof SendToBack, string ][]).map(([dir, Icon, tip]) => (
+              <button
+                key={dir}
+                onClick={() => callbacks.arrangeArea(dir)}
+                title={tip}
+                className="flex-1 flex items-center justify-center py-1.5 text-gray-600 hover:bg-gray-100"
+              >
+                <Icon className="w-4 h-4" />
+              </button>
+            ))}
           </div>
         </div>
         <DeleteButton label="Delete shape" onClick={callbacks.deleteSelection} />
@@ -391,9 +395,12 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
         <div className="space-y-3">
           <div className={sectionCls}>Plan</div>
           <TextField label="Name" value={seatData.name} onCommit={callbacks.commitPlanName} />
-          <div className="flex justify-between text-sm text-gray-700">
-            <span className="text-gray-500">Canvas</span>
-            <span>{seatData.size?.width} × {seatData.size?.height}</span>
+          <div>
+            <label className={labelCls}>Canvas size <span className="font-normal text-gray-400">(TipTip renders against this)</span></label>
+            <div className="grid grid-cols-2 gap-2">
+              <NumberField label="" value={seatData.size?.width ?? 0} onCommit={(v) => callbacks.commitCanvasSize('width', v)} />
+              <NumberField label="" value={seatData.size?.height ?? 0} onCommit={(v) => callbacks.commitCanvasSize('height', v)} />
+            </div>
           </div>
         </div>
 

@@ -1,12 +1,15 @@
-// Derived geometry over a plan: absolute seat positions and the content
-// bounding box. The bounds drive fit-to-content and the static render layer,
-// so the view hugs the actual seats/areas instead of the (often oversized)
-// JSON `size` field.
+// Derived geometry over a plan: absolute seat positions, the content bounding
+// box, and the true JSON canvas rect. TipTip renders against the JSON `size`,
+// so we draw that canvas at its real dimensions and place everything at its
+// actual coordinates. `bounds` (canvas ∪ content, padded) drives fit/clamp and
+// the static layer so off-canvas content is still reachable, while `canvas` is
+// what we paint as the white card.
 
 import type { SeatData, Zone, Row, Seat, Area, Bounds } from './types';
 
 export interface ContentMetrics {
   bounds: Bounds;
+  canvas: Bounds; // the JSON size rectangle (0,0,width,height)
   positions: Map<string, { x: number; y: number; radius: number }>;
 }
 
@@ -56,13 +59,21 @@ export const computeContentMetrics = (seatData: SeatData | null): ContentMetrics
     });
   }
 
-  if (!isFinite(minX)) {
-    minX = 0;
-    minY = 0;
-    maxX = seatData?.size?.width || 1000;
-    maxY = seatData?.size?.height || 700;
+  // The true canvas rect from the JSON size (what TipTip renders against)
+  const cw = seatData?.size?.width || 1000;
+  const ch = seatData?.size?.height || 700;
+  const canvas: Bounds = { x: 0, y: 0, w: cw, h: ch };
+
+  // Viewport bounds = canvas ∪ content, so the whole canvas is always visible
+  // and any content placed outside it is still reachable.
+  let bx = 0, by = 0, bMaxX = cw, bMaxY = ch;
+  if (isFinite(minX)) {
+    bx = Math.min(bx, minX);
+    by = Math.min(by, minY);
+    bMaxX = Math.max(bMaxX, maxX);
+    bMaxY = Math.max(bMaxY, maxY);
   }
   const pad = 60;
-  const bounds: Bounds = { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
-  return { bounds, positions };
+  const bounds: Bounds = { x: bx - pad, y: by - pad, w: bMaxX - bx + pad * 2, h: bMaxY - by + pad * 2 };
+  return { bounds, canvas, positions };
 };

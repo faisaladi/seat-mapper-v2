@@ -1006,28 +1006,30 @@ const SeatMapEditor: React.FC = () => {
     ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.x, dpr * view.y);
 
     const b = contentMetrics.bounds;
+    const c = contentMetrics.canvas;
 
-    // White content card so the map extent reads against the gray backdrop
+    // White card = the true JSON canvas (0,0,width,height), so seats/shapes
+    // read at their real TipTip coordinates against the gray backdrop.
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(b.x, b.y, b.w, b.h);
-    ctx.strokeStyle = '#e5e7eb';
+    ctx.fillRect(c.x, c.y, c.w, c.h);
+    ctx.strokeStyle = '#cbd5e1';
     ctx.lineWidth = 1 / view.scale;
-    ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.strokeRect(c.x, c.y, c.w, c.h);
 
-    // Grid (behind content). Skip when the on-screen step would be too dense.
+    // Grid (behind content), clipped to the canvas. Skip when too dense.
     if (showGrid && GRID_SIZE * view.scale >= 6) {
       ctx.strokeStyle = '#eef2f7';
       ctx.lineWidth = 1 / view.scale;
       ctx.beginPath();
-      const startX = Math.ceil(b.x / GRID_SIZE) * GRID_SIZE;
-      for (let gx = startX; gx <= b.x + b.w; gx += GRID_SIZE) {
-        ctx.moveTo(gx, b.y);
-        ctx.lineTo(gx, b.y + b.h);
+      const startX = Math.ceil(c.x / GRID_SIZE) * GRID_SIZE;
+      for (let gx = startX; gx <= c.x + c.w; gx += GRID_SIZE) {
+        ctx.moveTo(gx, c.y);
+        ctx.lineTo(gx, c.y + c.h);
       }
-      const startY = Math.ceil(b.y / GRID_SIZE) * GRID_SIZE;
-      for (let gy = startY; gy <= b.y + b.h; gy += GRID_SIZE) {
-        ctx.moveTo(b.x, gy);
-        ctx.lineTo(b.x + b.w, gy);
+      const startY = Math.ceil(c.y / GRID_SIZE) * GRID_SIZE;
+      for (let gy = startY; gy <= c.y + c.h; gy += GRID_SIZE) {
+        ctx.moveTo(c.x, gy);
+        ctx.lineTo(c.x + c.w, gy);
       }
       ctx.stroke();
     }
@@ -1405,6 +1407,15 @@ const SeatMapEditor: React.FC = () => {
     if (!seatData || !name.trim() || name.trim() === seatData.name) return;
     beginGesture();
     setSeatData({ ...seatData, name: name.trim() });
+  };
+
+  // Edit the JSON canvas size (what TipTip renders against)
+  const commitCanvasSize = (dim: 'width' | 'height', value: number): void => {
+    if (!seatData) return;
+    const v = Math.max(1, Math.round(value));
+    if ((seatData.size?.[dim] ?? 0) === v) return;
+    beginGesture();
+    setSeatData({ ...seatData, size: { width: seatData.size?.width ?? 1000, height: seatData.size?.height ?? 700, [dim]: v } });
   };
 
   // Hit-testing (engine/hit-test); cycles overlapping objects on repeat clicks
@@ -2084,6 +2095,7 @@ const SeatMapEditor: React.FC = () => {
               commitPlanName,
               applyStatus: applyStatusToSelection,
               clearSelection,
+              commitCanvasSize,
               assignCategory: assignCategoryToSelection,
               updateCategoryLabel,
               updateCategoryName,
