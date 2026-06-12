@@ -2,94 +2,9 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 'use client';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Upload, Copy, RotateCcw, Save, Edit2, Check, X, Download, MousePointer, Grid3X3, Rows, ZoomIn, ZoomOut } from 'lucide-react';
-
-// Type definitions
-interface Position {
-  x: number;
-  y: number;
-}
-
-interface Size {
-  width: number;
-  height: number;
-}
-
-interface Rectangle {
-  width: number;
-  height: number;
-}
-
-interface TextContent {
-  text: string;
-  color: string;
-  size: number;
-  position?: Position;
-}
-
-interface Radius {
-  x: number;
-  y: number;
-}
-
-interface Ellipse {
-  radius: Radius;
-}
-
-interface Circle {
-  radius: number;
-}
-
-interface Polygon {
-  points: Position[];
-}
-
-interface Area {
-  uuid?: string;
-  shape: string;
-  position: Position;
-  color: string;
-  border_color: string;
-  rectangle?: Rectangle;
-  text?: TextContent;
-  rotation?: number;
-  ellipse?: Ellipse;
-  circle?: Circle;
-  polygon?: Polygon;
-}
-
-interface Seat {
-  seat_guid: string;
-  seat_number: string;
-  position: Position;
-  category: string;
-  status?: string;
-  radius?: number;
-}
-
-interface Row {
-  position: Position;
-  seats: Seat[];
-  row_number?: string;
-}
-
-interface Zone {
-  position: Position;
-  rows: Row[];
-  areas?: Area[];
-}
-
-interface Category {
-  name: string;
-  color: string;
-}
-
-interface SeatData {
-  name: string;
-  size: Size;
-  zones: Zone[];
-  categories: Category[];
-}
+import { Upload, Copy, RotateCcw, Save, Edit2, Check, X, Download, MousePointer, Grid3X3, Rows, ZoomIn, ZoomOut, Maximize, Undo2, Redo2, Wand2 } from 'lucide-react';
+import type { Position, Area, Seat, Row, Zone, Category, SeatData, ViewState, Bounds } from './types';
+import NumberingWizard, { NumberingResult } from './numbering-wizard';
 
 interface StatusConfig {
   outline: string;
@@ -103,6 +18,11 @@ interface SeatStats {
   sold: number;
 }
 
+interface Toast {
+  message: string;
+  type: 'success' | 'error' | 'info';
+}
+
 // Define types for selected objects and selection mode
 type SelectionMode = 'area' | 'row' | 'object';
 type SelectedObject = { type: 'seat' | 'area' | 'row', id: string, data: Seat | Area | Row, zoneIndex: number, rowIndex?: number, seatIndex?: number, areaIndex?: number };
@@ -114,8 +34,10 @@ const SeatMapEditor: React.FC = () => {
   const [dragStart, setDragStart] = useState<Position | null>(null);
   const [dragEnd, setDragEnd] = useState<Position | null>(null);
   const [currentStatus, setCurrentStatus] = useState<string>('available');
-  const [currentCategory, setCurrentCategory] = useState<string>('');
-  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  // Categories are edited by index, not by name: names are ticket UUIDs that
+  // can (accidentally) collide, and name-based identity made duplicates
+  // impossible to disentangle.
+  const [editingCategory, setEditingCategory] = useState<number | null>(null);
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('area');
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
   const [objectProperties, setObjectProperties] = useState<Record<string, string | number>>({});
@@ -128,10 +50,62 @@ const SeatMapEditor: React.FC = () => {
   const [dragOffset, setDragOffset] = useState<Position | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+  const [showWizard, setShowWizard] = useState<boolean>(false);
+
+  // Toast notifications (replaces blocking alert())
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((message: string, type: Toast['type'] = 'success'): void => {
+    setToast({ message, type });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  // Undo / redo: snapshot stack. beginGesture() is called once before every
+  // mutation (or at the start of a drag), so one user action = one undo step.
+  const undoStackRef = useRef<SeatData[]>([]);
+  const redoStackRef = useRef<SeatData[]>([]);
+  const [historyVersion, setHistoryVersion] = useState<number>(0);
+  const HISTORY_LIMIT = 50;
+
+  const seatDataRef = useRef<SeatData | null>(null);
+  seatDataRef.current = seatData;
+
+  const beginGesture = useCallback((): void => {
+    const current = seatDataRef.current;
+    if (!current) return;
+    undoStackRef.current.push(structuredClone(current));
+    if (undoStackRef.current.length > HISTORY_LIMIT) undoStackRef.current.shift();
+    redoStackRef.current = [];
+    setHistoryVersion(v => v + 1);
+  }, []);
+
+  const undo = useCallback((): void => {
+    const current = seatDataRef.current;
+    if (!current || undoStackRef.current.length === 0) return;
+    redoStackRef.current.push(structuredClone(current));
+    setSeatData(undoStackRef.current.pop()!);
+    setSelectedSeats(new Set());
+    setSelectedObject(null);
+    setObjectProperties({});
+    setHistoryVersion(v => v + 1);
+  }, []);
+
+  const redo = useCallback((): void => {
+    const current = seatDataRef.current;
+    if (!current || redoStackRef.current.length === 0) return;
+    undoStackRef.current.push(structuredClone(current));
+    setSeatData(redoStackRef.current.pop()!);
+    setSelectedSeats(new Set());
+    setSelectedObject(null);
+    setObjectProperties({});
+    setHistoryVersion(v => v + 1);
+  }, []);
+
+
   // Performance optimizations
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const seatPositionsRef = useRef<Map<string, {x: number, y: number, radius: number}>>(new Map());
+  const staticScaleRef = useRef<number>(1);
 
   // Memoized category map for O(1) lookup
   const categoryMap = useMemo(() => {
@@ -142,31 +116,240 @@ const SeatMapEditor: React.FC = () => {
     return map;
   }, [seatData?.categories]);
 
-  // Zoom state and controls
-  const [zoom, setZoom] = useState<number>(1);
-  const MIN_ZOOM = 0.3;
-  const MAX_ZOOM = 3;
-  const ZOOM_STEP = 0.1;
+  // Seats per category
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    seatData?.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        row.seats.forEach((seat: Seat) => {
+          counts.set(seat.category, (counts.get(seat.category) || 0) + 1);
+        });
+      });
+    });
+    return counts;
+  }, [seatData]);
 
-  const zoomIn = (): void => {
-    setZoom((prev) => Math.min(MAX_ZOOM, parseFloat((prev + ZOOM_STEP).toFixed(2))));
-  };
+  // Content bounding box + absolute seat positions, recomputed when data changes.
+  // The bounds drive fit-to-content and the static layer size, so the view hugs
+  // the actual seats/areas instead of the (often oversized) JSON `size` field.
+  const contentMetrics = useMemo(() => {
+    const positions = new Map<string, { x: number; y: number; radius: number }>();
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const extend = (x1: number, y1: number, x2: number, y2: number): void => {
+      if (x1 < minX) minX = x1;
+      if (y1 < minY) minY = y1;
+      if (x2 > maxX) maxX = x2;
+      if (y2 > maxY) maxY = y2;
+    };
 
-  const zoomOut = (): void => {
-    setZoom((prev) => Math.max(MIN_ZOOM, parseFloat((prev - ZOOM_STEP).toFixed(2))));
-  };
-
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>): void => {
-    if (!seatData) return;
-    // Only handle pinch-zoom (typically sends wheel with ctrlKey)
-    if (!e.ctrlKey) return;
-    e.preventDefault();
-    if (e.deltaY < 0) {
-      zoomIn();
-    } else if (e.deltaY > 0) {
-      zoomOut();
+    if (seatData) {
+      seatData.zones.forEach((zone: Zone) => {
+        const zx = zone.position?.x ?? 0;
+        const zy = zone.position?.y ?? 0;
+        zone.rows.forEach((row: Row) => {
+          const rx = row.position?.x ?? 0;
+          const ry = row.position?.y ?? 0;
+          row.seats.forEach((seat: Seat) => {
+            const x = seat.position.x + zx + rx;
+            const y = seat.position.y + zy + ry;
+            const radius = seat.radius || 8;
+            positions.set(seat.seat_guid, { x, y, radius });
+            extend(x - radius, y - radius, x + radius, y + radius);
+          });
+        });
+        zone.areas?.forEach((area: Area) => {
+          const ax = area.position.x + zx;
+          const ay = area.position.y + zy;
+          if (area.shape === 'rectangle' && area.rectangle) {
+            extend(ax, ay, ax + area.rectangle.width, ay + area.rectangle.height);
+          } else if (area.shape === 'circle' && area.circle?.radius) {
+            const r = area.circle.radius;
+            extend(ax - r, ay - r, ax + r, ay + r);
+          } else if (area.shape === 'ellipse' && area.ellipse?.radius) {
+            extend(ax - area.ellipse.radius.x, ay - area.ellipse.radius.y, ax + area.ellipse.radius.x, ay + area.ellipse.radius.y);
+          } else if (area.shape === 'polygon' && area.polygon?.points) {
+            area.polygon.points.forEach(p => extend(ax + p.x, ay + p.y, ax + p.x, ay + p.y));
+          } else if (area.shape === 'text' && area.text) {
+            const halfW = (area.text.text?.length || 0) * (area.text.size || 16) * 0.35;
+            const halfH = area.text.size || 16;
+            extend(ax - halfW, ay - halfH, ax + halfW, ay + halfH);
+          }
+        });
+      });
     }
-  };
+
+    if (!isFinite(minX)) {
+      minX = 0;
+      minY = 0;
+      maxX = seatData?.size?.width || 1000;
+      maxY = seatData?.size?.height || 700;
+    }
+    const pad = 60;
+    const bounds: Bounds = { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
+    return { bounds, positions };
+  }, [seatData]);
+
+  // Viewport state (zoom & pan). Lives in a ref so wheel/drag updates never
+  // trigger a React re-render; only the zoom % readout is mirrored in state.
+  const viewRef = useRef<ViewState>({ scale: 1, x: 0, y: 0 });
+  const dprRef = useRef<number>(1);
+  const rafRef = useRef<number | null>(null);
+  const drawRef = useRef<() => void>(() => {});
+  const panLastRef = useRef<Position | null>(null);
+  const needsFitRef = useRef<boolean>(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [zoomPct, setZoomPct] = useState<number>(100);
+  const [spaceHeld, setSpaceHeld] = useState<boolean>(false);
+  const [isPanning, setIsPanning] = useState<boolean>(false);
+  const hasSeatData = Boolean(seatData);
+
+  const MIN_SCALE = 0.02;
+  const MAX_SCALE = 8;
+
+  const requestRedraw = useCallback((): void => {
+    if (rafRef.current != null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      drawRef.current();
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  // Keep at least `margin` px of content visible so the map can never be lost off-screen
+  const clampView = useCallback((view: ViewState): void => {
+    view.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, view.scale));
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = dprRef.current;
+    const cw = canvas.width / dpr;
+    const ch = canvas.height / dpr;
+    const b = contentMetrics.bounds;
+    const margin = 80;
+    const left = b.x * view.scale + view.x;
+    const right = (b.x + b.w) * view.scale + view.x;
+    const top = b.y * view.scale + view.y;
+    const bottom = (b.y + b.h) * view.scale + view.y;
+    if (right < margin) view.x += margin - right;
+    else if (left > cw - margin) view.x -= left - (cw - margin);
+    if (bottom < margin) view.y += margin - bottom;
+    else if (top > ch - margin) view.y -= top - (ch - margin);
+  }, [contentMetrics]);
+
+  const applyView = useCallback((mutate: (v: ViewState) => void): void => {
+    const view = viewRef.current;
+    mutate(view);
+    clampView(view);
+    setZoomPct(Math.round(view.scale * 100));
+    requestRedraw();
+  }, [clampView, requestRedraw]);
+
+  // Zoom keeping the screen point (sx, sy) fixed — i.e. zoom toward the cursor
+  const zoomAt = useCallback((sx: number, sy: number, factor: number): void => {
+    applyView(v => {
+      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
+      const k = next / v.scale;
+      v.x = sx - (sx - v.x) * k;
+      v.y = sy - (sy - v.y) * k;
+      v.scale = next;
+    });
+  }, [applyView]);
+
+  const zoomAtCenter = useCallback((factor: number): void => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = dprRef.current;
+    zoomAt(canvas.width / dpr / 2, canvas.height / dpr / 2, factor);
+  }, [zoomAt]);
+
+  const fitToContent = useCallback((): void => {
+    const el = containerRef.current;
+    if (!el) return;
+    const cw = el.clientWidth;
+    const ch = el.clientHeight;
+    if (cw < 10 || ch < 10) return;
+    const b = contentMetrics.bounds;
+    applyView(v => {
+      v.scale = Math.min(1.5, Math.max(MIN_SCALE, Math.min(cw / b.w, ch / b.h) * 0.97));
+      v.x = (cw - b.w * v.scale) / 2 - b.x * v.scale;
+      v.y = (ch - b.h * v.scale) / 2 - b.y * v.scale;
+    });
+  }, [applyView, contentMetrics]);
+
+  const resetZoom = useCallback((): void => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = dprRef.current;
+    zoomAt(canvas.width / dpr / 2, canvas.height / dpr / 2, 1 / viewRef.current.scale);
+  }, [zoomAt]);
+
+  // Size the canvas backing store to its container (device-pixel aware, so
+  // rendering is crisp on HiDPI displays)
+  useEffect(() => {
+    const el = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!el || !canvas) return;
+    const resize = (): void => {
+      const dpr = window.devicePixelRatio || 1;
+      dprRef.current = dpr;
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w < 1 || h < 1) return;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+      requestRedraw();
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [requestRedraw, hasSeatData]);
+
+  // Wheel must be a native non-passive listener: React's synthetic onWheel is
+  // passive, so preventDefault() there can't stop the browser's own page
+  // zoom/scroll from fighting the canvas (the old "clunky pinch" behavior).
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent): void => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      let dx = e.deltaX;
+      let dy = e.deltaY;
+      if (e.deltaMode === 1) {
+        dx *= 15;
+        dy *= 15;
+      }
+      if (e.ctrlKey || e.metaKey) {
+        // Trackpad pinch (sent as ctrl+wheel) or Ctrl/Cmd + scroll: zoom to cursor.
+        // Exponential mapping keeps the rate proportional to the gesture.
+        const clamped = Math.max(-25, Math.min(25, dy));
+        zoomAt(e.clientX - rect.left, e.clientY - rect.top, Math.exp(-clamped * 0.01));
+      } else {
+        // Plain scroll / two-finger swipe: pan
+        applyView(v => {
+          v.x -= dx;
+          v.y -= dy;
+        });
+      }
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, [zoomAt, applyView, hasSeatData]);
+
+  // Fit the view once after a new file is loaded
+  useEffect(() => {
+    if (seatData && needsFitRef.current) {
+      needsFitRef.current = false;
+      fitToContent();
+    }
+  }, [seatData, fitToContent]);
 
   // Status configurations
   const statusConfig: Record<string, StatusConfig> = {
@@ -217,15 +400,26 @@ const SeatMapEditor: React.FC = () => {
           
           // Validate and fix data
           const { data: validatedData, fixedCount } = validateAndFixData(jsonData);
-          
+
           if (fixedCount > 0) {
-            alert(`Fixed ${fixedCount} duplicate seat IDs in the uploaded file.`);
+            showToast(`Fixed ${fixedCount} duplicate seat IDs in the uploaded file.`, 'info');
           }
-          
+
+          // Duplicate category names make colors and seat assignment ambiguous
+          const names = (validatedData.categories || []).map((c: Category) => c.name);
+          const dupes = names.filter((n: string, i: number) => names.indexOf(n) !== i);
+          if (dupes.length > 0) {
+            showToast(`Warning: ${dupes.length + 1} categories share the same name/UUID — edit one of them to a unique UUID, then reassign its seats.`, 'error');
+          }
+
+          undoStackRef.current = [];
+          redoStackRef.current = [];
+          setHistoryVersion(v => v + 1);
+          needsFitRef.current = true;
           setSeatData(validatedData);
           setSelectedSeats(new Set());
         } catch (error) {
-          alert('Invalid JSON file');
+          showToast('Invalid JSON file', 'error');
         }
       };
       reader.readAsText(file);
@@ -247,13 +441,29 @@ const SeatMapEditor: React.FC = () => {
     return seatsInRow;
   };
 
+  const screenToWorld = (clientX: number, clientY: number): Position => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const view = viewRef.current;
+    return {
+      x: (clientX - rect.left - view.x) / view.scale,
+      y: (clientY - rect.top - view.y) / view.scale,
+    };
+  };
+
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>): void => {
     if (!canvasRef.current || !seatData) return;
-    
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / zoom;
-    const y = (e.clientY - rect.top) / zoom;
-    
+
+    // Middle mouse button or space+drag pans the canvas in any mode
+    if (e.button === 1 || spaceHeld) {
+      e.preventDefault();
+      panLastRef.current = { x: e.clientX, y: e.clientY };
+      setIsPanning(true);
+      return;
+    }
+    if (e.button !== 0) return;
+
+    const { x, y } = screenToWorld(e.clientX, e.clientY);
+
     if (selectionMode === 'area') {
       // Check if we're clicking on a selected object first
       if (selectedObject && isMoveEnabled) {
@@ -282,6 +492,7 @@ const SeatMapEditor: React.FC = () => {
         
         if (distance <= clickRadius) {
           // Start dragging the object
+          beginGesture();
           setIsDraggingObject(true);
           setDragOffset({ x: objectX - x, y: objectY - y });
           return;
@@ -318,6 +529,7 @@ const SeatMapEditor: React.FC = () => {
           const row = seatData.zones[object.zoneIndex].rows[object.rowIndex];
           const rowX = row.position.x + seatData.zones[object.zoneIndex].position.x;
           const rowY = row.position.y + seatData.zones[object.zoneIndex].position.y;
+          beginGesture();
           setIsDraggingObject(true);
           setDragOffset({ x: rowX - x, y: rowY - y });
         }
@@ -349,6 +561,7 @@ const SeatMapEditor: React.FC = () => {
             objectX = area.position.x + seatData.zones[object.zoneIndex].position.x;
             objectY = area.position.y + seatData.zones[object.zoneIndex].position.y;
           }
+          beginGesture();
           setIsDraggingObject(true);
           setDragOffset({ x: objectX - x, y: objectY - y });
         }
@@ -361,12 +574,20 @@ const SeatMapEditor: React.FC = () => {
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>): void => {
+    if (panLastRef.current) {
+      const dx = e.clientX - panLastRef.current.x;
+      const dy = e.clientY - panLastRef.current.y;
+      panLastRef.current = { x: e.clientX, y: e.clientY };
+      applyView(v => {
+        v.x += dx;
+        v.y += dy;
+      });
+      return;
+    }
     if (!canvasRef.current || !seatData) return;
-    
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / zoom;
-    const y = (e.clientY - rect.top) / zoom;
-    
+
+    const { x, y } = screenToWorld(e.clientX, e.clientY);
+
     if (isDragging) {
       setDragEnd({ x, y });
     } else if (isDraggingObject && selectedObject && dragOffset && isMoveEnabled) {
@@ -438,6 +659,10 @@ const SeatMapEditor: React.FC = () => {
   };
 
   const handleMouseUp = (): void => {
+    if (panLastRef.current) {
+      panLastRef.current = null;
+      setIsPanning(false);
+    }
     if (isDragging && dragStart && dragEnd) {
       selectSeatsInArea();
     }
@@ -479,6 +704,7 @@ const SeatMapEditor: React.FC = () => {
   const updateSelectedSeatsStatus = (): void => {
     if (!seatData || selectedSeats.size === 0) return;
 
+    beginGesture();
     const updatedSeatData: SeatData = { ...seatData };
     
     updatedSeatData.zones.forEach((zone: Zone) => {
@@ -495,49 +721,35 @@ const SeatMapEditor: React.FC = () => {
     setSelectedSeats(new Set());
   };
 
-  // Update selected seats category
-  const updateSelectedSeatsCategory = (): void => {
-    if (!seatData || selectedSeats.size === 0 || !currentCategory) return;
+  // Assign the selected seats to a category (from its card in the Categories panel)
+  const assignCategoryToSelection = (categoryIndex: number): void => {
+    if (!seatData || selectedSeats.size === 0) return;
+    const category = seatData.categories[categoryIndex];
+    if (!category) return;
 
+    beginGesture();
     const updatedSeatData: SeatData = { ...seatData };
-    
+
     updatedSeatData.zones.forEach((zone: Zone) => {
       zone.rows.forEach((row: Row) => {
         row.seats.forEach((seat: Seat) => {
           if (selectedSeats.has(seat.seat_guid)) {
-            seat.category = currentCategory;
+            seat.category = category.name;
           }
         });
       });
     });
 
     setSeatData(updatedSeatData);
+    showToast(`Assigned ${selectedSeats.size} seat(s) to ${category.label || category.name}`);
     setSelectedSeats(new Set());
   };
 
-  // Draw static elements (zones, areas, seats) to offscreen canvas
-  const drawStaticLayer = useCallback((): void => {
+  // Paint areas + seats in world coordinates onto the given context.
+  // `cull` is a world-space rect: seats outside it are skipped (used when
+  // drawing per-frame at high zoom).
+  const paintContent = useCallback((ctx: CanvasRenderingContext2D, cull: Bounds | null): void => {
     if (!seatData) return;
-
-    // Create or resize static canvas
-    if (!staticCanvasRef.current) {
-      staticCanvasRef.current = document.createElement('canvas');
-    }
-    
-    const canvas = staticCanvasRef.current;
-    if (canvas.width !== seatData.size.width || canvas.height !== seatData.size.height) {
-      canvas.width = seatData.size.width;
-      canvas.height = seatData.size.height;
-    }
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    // Clear static canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Clear positions map
-    seatPositionsRef.current.clear();
 
     // Draw areas (background elements)
     seatData.zones.forEach((zone: Zone, zoneIndex: number) => {
@@ -702,9 +914,11 @@ const SeatMapEditor: React.FC = () => {
           const seatX = seat.position.x + zone.position.x + row.position.x;
           const seatY = seat.position.y + zone.position.y + row.position.y;
           const radius = seat.radius || 8;
-          
-          // Store position for fast lookup in dynamic layer
-          seatPositionsRef.current.set(seat.seat_guid, { x: seatX, y: seatY, radius });
+
+          if (cull && (
+            seatX + radius < cull.x || seatX - radius > cull.x + cull.w ||
+            seatY + radius < cull.y || seatY - radius > cull.y + cull.h
+          )) return;
 
           // Draw seat circle
           ctx.beginPath();
@@ -727,52 +941,135 @@ const SeatMapEditor: React.FC = () => {
         });
       });
     });
+
+    // Row labels at row ends (pretix-style, honoring row_number_position)
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '11px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    seatData.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        const pos = row.row_number_position;
+        if (!row.row_number || !pos || row.seats.length === 0) return;
+
+        // Extreme seats along the row's dominant axis
+        let first = row.seats[0];
+        let last = row.seats[0];
+        const xs = row.seats.map(s => s.position.x);
+        const ys = row.seats.map(s => s.position.y);
+        const axis: 'x' | 'y' = (Math.max(...ys) - Math.min(...ys)) > (Math.max(...xs) - Math.min(...xs)) ? 'y' : 'x';
+        row.seats.forEach(s => {
+          if (s.position[axis] < first.position[axis]) first = s;
+          if (s.position[axis] > last.position[axis]) last = s;
+        });
+
+        const baseX = zone.position.x + row.position.x;
+        const baseY = zone.position.y + row.position.y;
+        let dx = last.position.x - first.position.x;
+        let dy = last.position.y - first.position.y;
+        const len = Math.hypot(dx, dy);
+        if (len > 0) { dx /= len; dy /= len; } else { dx = 1; dy = 0; }
+        const offset = (first.radius || 8) + 14;
+
+        const drawLabel = (x: number, y: number): void => {
+          if (cull && (x < cull.x - 30 || x > cull.x + cull.w + 30 || y < cull.y - 30 || y > cull.y + cull.h + 30)) return;
+          ctx.fillText(row.row_number!, x, y);
+        };
+        if (pos === 'start' || pos === 'both') {
+          drawLabel(baseX + first.position.x - dx * offset, baseY + first.position.y - dy * offset);
+        }
+        if (pos === 'end' || pos === 'both') {
+          drawLabel(baseX + last.position.x + dx * offset, baseY + last.position.y + dy * offset);
+        }
+      });
+    });
+    ctx.textBaseline = 'alphabetic';
   }, [seatData, categoryMap]);
 
-  // Update static layer when data changes
-  useEffect(() => {
-    drawStaticLayer();
-  }, [drawStaticLayer]);
+  // Render the cached content bitmap, sized to the content bounds within a
+  // pixel budget. When the view zooms past this resolution, draw() switches
+  // to direct (culled) vector painting so seats stay crisp.
+  const renderStaticLayer = useCallback((): void => {
+    if (!seatData) return;
 
-  // Draw the seat map (dynamic layer)
-  const drawSeatMap = useCallback((): void => {
-    if (!canvasRef.current || !seatData) return;
+    if (!staticCanvasRef.current) {
+      staticCanvasRef.current = document.createElement('canvas');
+    }
+    const canvas = staticCanvasRef.current;
+    const b = contentMetrics.bounds;
+    const MAX_DIM = 8192;
+    const MAX_PIXELS = 16_000_000;
+    const scale = Math.min(2, MAX_DIM / b.w, MAX_DIM / b.h, Math.sqrt(MAX_PIXELS / (b.w * b.h)));
+    staticScaleRef.current = scale;
+    canvas.width = Math.max(1, Math.ceil(b.w * scale));
+    canvas.height = Math.max(1, Math.ceil(b.h * scale));
 
-    const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
-    // Reset transform and clear canvas
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.restore();
+    ctx.setTransform(scale, 0, 0, scale, -b.x * scale, -b.y * scale);
+    ctx.clearRect(b.x, b.y, b.w, b.h);
+    paintContent(ctx, null);
+  }, [seatData, contentMetrics, paintContent]);
 
-    // Apply zoom scaling
-    ctx.save();
-    ctx.scale(zoom, zoom);
+  useEffect(() => {
+    renderStaticLayer();
+    requestRedraw();
+  }, [renderStaticLayer, requestRedraw]);
 
-    // Draw static layer
-    if (staticCanvasRef.current) {
-        ctx.drawImage(staticCanvasRef.current, 0, 0);
+  // Compose a frame: world transform -> content (bitmap or direct) -> overlays
+  const draw = useCallback((): void => {
+    const canvas = canvasRef.current;
+    if (!canvas || !seatData) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = dprRef.current;
+    const view = viewRef.current;
+    const cw = canvas.width / dpr;
+    const ch = canvas.height / dpr;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+
+    // World transform: screen = world * scale + offset
+    ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.x, dpr * view.y);
+
+    const b = contentMetrics.bounds;
+
+    // White content card so the map extent reads against the gray backdrop
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.lineWidth = 1 / view.scale;
+    ctx.strokeRect(b.x, b.y, b.w, b.h);
+
+    const effectiveScale = view.scale * dpr;
+    if (staticCanvasRef.current && effectiveScale <= staticScaleRef.current * 1.4) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(staticCanvasRef.current, b.x, b.y, b.w, b.h);
     } else {
-        // Fallback if static layer not ready
-        drawStaticLayer();
-        if (staticCanvasRef.current) {
-            ctx.drawImage(staticCanvasRef.current, 0, 0);
-        }
+      // Zoomed in past the bitmap's resolution: paint visible seats directly
+      const cull: Bounds = {
+        x: -view.x / view.scale,
+        y: -view.y / view.scale,
+        w: cw / view.scale,
+        h: ch / view.scale,
+      };
+      paintContent(ctx, cull);
     }
 
+    // Overlay stroke widths are divided by scale so they stay constant on screen
     // Draw Area Highlights (Selected Object)
-    if (selectedObject?.type === 'area' && seatData) {
+    if (selectedObject?.type === 'area') {
         const zone = seatData.zones[selectedObject.zoneIndex];
         if (zone && zone.areas && selectedObject.areaIndex !== undefined) {
             const area = zone.areas[selectedObject.areaIndex];
             const x = area.position.x + zone.position.x;
             const y = area.position.y + zone.position.y;
-            
+
             ctx.strokeStyle = '#fbbf24';
-            ctx.lineWidth = 3;
+            ctx.lineWidth = 3 / view.scale;
 
             if (area.shape === 'rectangle' && area.rectangle) {
                 ctx.strokeRect(x - 2, y - 2, area.rectangle.width + 4, area.rectangle.height + 4);
@@ -804,10 +1101,10 @@ const SeatMapEditor: React.FC = () => {
     // Highlight selected seats
     if (selectedSeats.size > 0) {
         ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 3;
-        
+        ctx.lineWidth = 3 / view.scale;
+
         selectedSeats.forEach(seatGuid => {
-            const pos = seatPositionsRef.current.get(seatGuid);
+            const pos = contentMetrics.positions.get(seatGuid);
             if (pos) {
                 ctx.beginPath();
                 ctx.arc(pos.x, pos.y, pos.radius + 3, 0, 2 * Math.PI);
@@ -815,13 +1112,13 @@ const SeatMapEditor: React.FC = () => {
             }
         });
     }
-    
+
     // Highlight single selected object seat
     if (selectedObject?.type === 'seat') {
-        const pos = seatPositionsRef.current.get(selectedObject.id);
+        const pos = contentMetrics.positions.get(selectedObject.id);
         if (pos) {
              ctx.strokeStyle = '#fbbf24';
-             ctx.lineWidth = 3;
+             ctx.lineWidth = 3 / view.scale;
              ctx.beginPath();
              ctx.arc(pos.x, pos.y, pos.radius + 3, 0, 2 * Math.PI);
              ctx.stroke();
@@ -830,56 +1127,73 @@ const SeatMapEditor: React.FC = () => {
 
     // Draw selection rectangle
     if (isDragging && dragStart && dragEnd) {
+      const rx = Math.min(dragStart.x, dragEnd.x);
+      const ry = Math.min(dragStart.y, dragEnd.y);
+      const rw = Math.abs(dragEnd.x - dragStart.x);
+      const rh = Math.abs(dragEnd.y - dragStart.y);
+      ctx.fillStyle = 'rgba(59, 130, 246, 0.08)';
+      ctx.fillRect(rx, ry, rw, rh);
       ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([5, 5]);
-      ctx.strokeRect(
-        Math.min(dragStart.x, dragEnd.x),
-        Math.min(dragStart.y, dragEnd.y),
-        Math.abs(dragEnd.x - dragStart.x),
-        Math.abs(dragEnd.y - dragStart.y)
-      );
+      ctx.lineWidth = 1.5 / view.scale;
+      ctx.setLineDash([6 / view.scale, 4 / view.scale]);
+      ctx.strokeRect(rx, ry, rw, rh);
       ctx.setLineDash([]);
     }
-    // Restore after drawing
-    ctx.restore();
-  }, [seatData, selectedSeats, isDragging, dragStart, dragEnd, selectedObject, zoom, drawStaticLayer]);
 
-  // Redraw when dynamic state changes
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }, [seatData, contentMetrics, paintContent, selectedSeats, isDragging, dragStart, dragEnd, selectedObject]);
+
+  // Keep the rAF loop pointed at the latest draw closure; redraw on state changes
   useEffect(() => {
-    drawSeatMap();
-  }, [drawSeatMap]);
+    drawRef.current = draw;
+    requestRedraw();
+  }, [draw, requestRedraw]);
 
-  // Initialize currentCategory when seatData loads
-  useEffect(() => {
-    if (seatData && seatData.categories && seatData.categories.length > 0 && !currentCategory) {
-      setCurrentCategory(seatData.categories[0].name);
-    }
-  }, [seatData, currentCategory]);
-
-  // Update category name
-  const updateCategoryName = (categoryId: string, newName: string): void => {
+  // Update category name (= ticket UUID) by index
+  const updateCategoryName = (categoryIndex: number, newName: string): void => {
     if (!seatData || !newName.trim()) return;
+    const trimmed = newName.trim();
+    const existing = seatData.categories[categoryIndex];
+    if (!existing) return;
+    if (existing.name === trimmed) {
+      setEditingCategory(null);
+      setEditCategoryName('');
+      return;
+    }
 
+    // Names are the only link between seats and categories, so two categories
+    // sharing one name makes colors and assignment ambiguous — block it.
+    if (seatData.categories.some((c: Category, i: number) => i !== categoryIndex && c.name === trimmed)) {
+      showToast('Another category already uses this name/UUID — pick a unique one.', 'error');
+      return;
+    }
+
+    beginGesture();
     const updatedSeatData: SeatData = { ...seatData };
-    const categoryIndex = updatedSeatData.categories.findIndex((cat: Category) => cat.name === categoryId);
-    
-    if (categoryIndex !== -1) {
-      const oldName = updatedSeatData.categories[categoryIndex].name;
-      const categoryColor = updatedSeatData.categories[categoryIndex].color;
-      
-      // Update category name while preserving color
-      updatedSeatData.categories[categoryIndex] = {
-        name: newName.trim(),
-        color: categoryColor
-      };
-      
+    const oldName = existing.name;
+
+    // Update the name (ticket UUID) while preserving color, label and any
+    // other fields — the alias must survive per-show UUID swaps
+    updatedSeatData.categories[categoryIndex] = {
+      ...existing,
+      name: trimmed
+    };
+
+    // If the old name was duplicated across categories, seats can't be split
+    // by name — leave them pointing at the remaining duplicate so renaming one
+    // card is a safe way OUT of the duplicate state.
+    const oldNameIsShared = updatedSeatData.categories.some(
+      (c: Category, i: number) => i !== categoryIndex && c.name === oldName
+    );
+    if (oldNameIsShared) {
+      showToast('This name was shared by two categories — seats stayed with the other one. Select and assign the seats that belong here.', 'info');
+    } else {
       // Update all seats that reference this category
       updatedSeatData.zones.forEach((zone: Zone) => {
         zone.rows.forEach((row: Row) => {
           row.seats.forEach((seat: Seat) => {
             if (seat.category === oldName) {
-              seat.category = newName.trim();
+              seat.category = trimmed;
             }
           });
         });
@@ -891,9 +1205,25 @@ const SeatMapEditor: React.FC = () => {
     setEditCategoryName('');
   };
 
+  // Update category display alias (stored as categories[].label inside the
+  // JSON — TipTip's importer tolerates the extra field, so the readable name
+  // survives the per-show ticket-UUID swap of `name`)
+  const updateCategoryLabel = (categoryIndex: number, label: string): void => {
+    if (!seatData || !seatData.categories[categoryIndex]) return;
+    const trimmed = label.trim();
+    if ((seatData.categories[categoryIndex].label || '') === trimmed) return;
+    beginGesture();
+    setSeatData({
+      ...seatData,
+      categories: seatData.categories.map((c: Category, i: number) =>
+        i === categoryIndex ? { ...c, label: trimmed || undefined } : c
+      ),
+    });
+  };
+
   // Start editing category
-  const startEditingCategory = (categoryId: string, currentName: string): void => {
-    setEditingCategory(categoryId);
+  const startEditingCategory = (categoryIndex: number, currentName: string): void => {
+    setEditingCategory(categoryIndex);
     setEditCategoryName(currentName);
   };
 
@@ -1288,7 +1618,8 @@ const SeatMapEditor: React.FC = () => {
   // Apply property changes
   const applyPropertyChanges = (): void => {
     if (!objectProperties || Object.keys(objectProperties).length === 0) return;
-    
+
+    beginGesture();
     Object.entries(objectProperties).forEach(([property, value]) => {
       updateObjectProperty(property, value);
     });
@@ -1302,26 +1633,58 @@ const SeatMapEditor: React.FC = () => {
     setObjectProperties({});
   };
   
-  // Handle keyboard shortcuts
+  // Handle keyboard shortcuts (ignored while typing in inputs)
   useEffect(() => {
+    const isTyping = (e: KeyboardEvent): boolean => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return false;
+      return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable;
+    };
+
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 's') {
+      if (isTyping(e)) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (e.key === ' ') {
+        e.preventDefault();
+        setSpaceHeld(true);
+      } else if (e.key === 's') {
         toggleSelectionMode('area');
       } else if (e.key === 'r') {
         toggleSelectionMode('row');
       } else if (e.key === 'a') {
         toggleSelectionMode('object');
+      } else if (e.key === 'f') {
+        fitToContent();
+      } else if (e.key === '0') {
+        resetZoom();
+      } else if (e.key === '=' || e.key === '+') {
+        zoomAtCenter(1.25);
+      } else if (e.key === '-' || e.key === '_') {
+        zoomAtCenter(0.8);
       }
     };
-    
+
+    const handleKeyUp = (e: KeyboardEvent): void => {
+      if (e.key === ' ') setSpaceHeld(false);
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [fitToContent, resetZoom, zoomAtCenter, undo, redo]);
   
   // Handle key press events
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (e.key === 'Enter') {
-      updateCategoryName(editingCategory || '', editCategoryName);
+    if (e.key === 'Enter' && editingCategory !== null) {
+      updateCategoryName(editingCategory, editCategoryName);
     }
     if (e.key === 'Escape') {
       cancelEditingCategory();
@@ -1334,9 +1697,9 @@ const SeatMapEditor: React.FC = () => {
     
     try {
       await navigator.clipboard.writeText(JSON.stringify(seatData, null, 2));
-      alert('✅ JSON successfully copied to clipboard!');
+      showToast('JSON copied to clipboard');
     } catch (error) {
-      alert('❌ Auto-copy failed. Please select all text manually and copy.');
+      showToast('Auto-copy failed — select all text manually and copy.', 'error');
     }
   };
 
@@ -1382,6 +1745,36 @@ const SeatMapEditor: React.FC = () => {
               ref={fileInputRef}
               className="hidden"
             />
+            {seatData && (
+              <div className="flex items-center border rounded-lg overflow-hidden">
+                <button
+                  onClick={undo}
+                  disabled={undoStackRef.current.length === 0}
+                  className="w-9 h-9 flex items-center justify-center hover:bg-gray-100 disabled:opacity-30"
+                  title="Undo (⌘Z)"
+                >
+                  <Undo2 className="w-4 h-4" />
+                </button>
+                <div className="w-px h-5 bg-gray-200" />
+                <button
+                  onClick={redo}
+                  disabled={redoStackRef.current.length === 0}
+                  className="w-9 h-9 flex items-center justify-center hover:bg-gray-100 disabled:opacity-30"
+                  title="Redo (⇧⌘Z)"
+                >
+                  <Redo2 className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+            {seatData && (
+              <button
+                onClick={() => setShowWizard(true)}
+                className="flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+              >
+                <Wand2 className="w-4 h-4 mr-2" />
+                Numbering
+              </button>
+            )}
             <button
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -1530,53 +1923,6 @@ const SeatMapEditor: React.FC = () => {
               </div>
             </div>
 
-            {/* Category Selection */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3">Category Update</h3>
-              <div className="w-full border border-gray-300 rounded-lg">
-                <div className="p-2 bg-gray-50 border-b text-sm font-medium text-gray-700">
-                  Select Category:
-                </div>
-                <div className="max-h-32 overflow-y-auto">
-                  <div
-                    className={`p-2 cursor-pointer hover:bg-blue-50 flex items-center space-x-2 ${
-                      currentCategory === '' ? 'bg-blue-100' : ''
-                    }`}
-                    onClick={() => setCurrentCategory('')}
-                  >
-                    <div className="w-4 h-4 border border-gray-300 rounded-full bg-white" />
-                    <span className="text-sm">No Category</span>
-                  </div>
-                  {seatData?.categories.map((category: Category, idx: number) => (
-                    <div
-                      key={idx}
-                      className={`p-2 cursor-pointer hover:bg-blue-50 flex items-center space-x-2 ${
-                        currentCategory === category.name ? 'bg-blue-100' : ''
-                      }`}
-                      onClick={() => setCurrentCategory(category.name)}
-                    >
-                      <div
-                        className="w-4 h-4 rounded-full border border-gray-300"
-                        style={{ backgroundColor: category.color }}
-                      />
-                      <span className="text-sm truncate">{category.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              
-              <div className="mt-3 space-y-2">
-                <button
-                  onClick={updateSelectedSeatsCategory}
-                  disabled={selectedSeats.size === 0 || !currentCategory}
-                  className="w-full flex items-center justify-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-400 transition-colors"
-                >
-                  <Save className="w-4 h-4 mr-2" />
-                  Update {selectedSeats.size} Selected Seat(s) Category
-                </button>
-              </div>
-            </div>
-
             {/* Legend */}
             <div>
               <h3 className="text-lg font-semibold mb-3">Status Legend</h3>
@@ -1620,25 +1966,44 @@ const SeatMapEditor: React.FC = () => {
             {seatData?.categories && (
               <div>
                 <h3 className="text-lg font-semibold mb-3">Categories</h3>
+                <p className="text-xs text-gray-500 mb-2">
+                  Display name is stored in the file and survives ticket-UUID changes. The UUID below it is what TipTip reads — swap it per show.
+                </p>
                 <div className="space-y-3">
                   {seatData.categories.map((category: Category, idx: number) => (
-                    <div key={idx} className="flex items-center space-x-3 p-2 border rounded-lg">
-                      <div
-                        className="w-6 h-6 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: category.color }}
-                      />
-                      {editingCategory === category.name ? (
-                        <div className="flex-1 flex items-center space-x-2">
+                    <div key={idx} className="p-2 border rounded-lg space-y-1.5">
+                      <div className="flex items-center space-x-2">
+                        <div
+                          className="w-5 h-5 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: category.color }}
+                        />
+                        <input
+                          key={`${idx}:${category.label ?? ''}`}
+                          type="text"
+                          defaultValue={category.label ?? ''}
+                          placeholder="Display name (e.g. VIP)…"
+                          onBlur={(e) => updateCategoryLabel(idx, e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                          }}
+                          className="flex-1 min-w-0 px-2 py-1 text-sm font-medium border border-transparent hover:border-gray-300 focus:border-blue-400 rounded outline-none"
+                        />
+                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                          {categoryCounts.get(category.name) || 0} seats
+                        </span>
+                      </div>
+                      {editingCategory === idx ? (
+                        <div className="flex items-center space-x-2 pl-7">
                           <input
                             type="text"
                             value={editCategoryName}
                             onChange={(e) => setEditCategoryName(e.target.value)}
-                            className="flex-1 px-2 py-1 text-sm border rounded"
+                            className="flex-1 min-w-0 px-2 py-1 text-xs font-mono border rounded"
                             autoFocus
                             onKeyPress={handleKeyPress}
                           />
                           <button
-                            onClick={() => updateCategoryName(category.name, editCategoryName)}
+                            onClick={() => updateCategoryName(idx, editCategoryName)}
                             className="p-1 text-green-600 hover:bg-green-100 rounded"
                           >
                             <Check className="w-4 h-4" />
@@ -1651,15 +2016,26 @@ const SeatMapEditor: React.FC = () => {
                           </button>
                         </div>
                       ) : (
-                        <div className="flex-1 flex items-center justify-between">
-                          <span className="text-sm font-mono break-all">{category.name}</span>
+                        <div className="flex items-center justify-between pl-7">
+                          <span className="text-xs font-mono text-gray-500 break-all" title="Ticket UUID (category name read by TipTip)">
+                            {category.name}
+                          </span>
                           <button
-                            onClick={() => startEditingCategory(category.name, category.name)}
-                            className="p-1 text-blue-600 hover:bg-blue-100 rounded ml-2"
+                            onClick={() => startEditingCategory(idx, category.name)}
+                            className="p-1 text-blue-600 hover:bg-blue-100 rounded ml-2 flex-shrink-0"
+                            title="Edit ticket UUID"
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
                         </div>
+                      )}
+                      {selectedSeats.size > 0 && (
+                        <button
+                          onClick={() => assignCategoryToSelection(idx)}
+                          className="w-full mt-1 px-2 py-1.5 text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 transition-colors"
+                        >
+                          Assign {selectedSeats.size} selected seat(s)
+                        </button>
                       )}
                     </div>
                   ))}
@@ -1670,9 +2046,9 @@ const SeatMapEditor: React.FC = () => {
         </div>
 
         {/* Canvas Area */}
-        <div className="flex-1 p-4 overflow-auto">
+        <div className="flex-1 p-4 flex flex-col min-h-0 min-w-0 overflow-hidden">
           {seatData ? (
-            <div className="bg-white rounded-lg shadow-sm border">
+            <div className="bg-white rounded-lg shadow-sm border flex-1 flex flex-col min-h-0">
               <div className="p-4 border-b">
                 {editingTitle ? (
                   <div className="flex items-center space-x-2 mb-2">
@@ -1685,6 +2061,7 @@ const SeatMapEditor: React.FC = () => {
                       onKeyPress={(e) => {
                         if (e.key === 'Enter') {
                           if (editTitle.trim()) {
+                            beginGesture();
                             setSeatData({...seatData, name: editTitle.trim()});
                             setEditingTitle(false);
                           }
@@ -1694,6 +2071,7 @@ const SeatMapEditor: React.FC = () => {
                     <button
                       onClick={() => {
                         if (editTitle.trim()) {
+                          beginGesture();
                           setSeatData({...seatData, name: editTitle.trim()});
                           setEditingTitle(false);
                         }
@@ -1727,38 +2105,50 @@ const SeatMapEditor: React.FC = () => {
                   </div>
                 )}
                 <p className="text-gray-600 text-sm mt-1">
-                  Click and drag to select multiple seats, then update their status
+                  Drag to select seats &middot; Scroll to pan &middot; Pinch or &#8984;/Ctrl + scroll to zoom &middot; Space or middle-click + drag to pan
                 </p>
               </div>
-              <div className="p-4 relative overflow-auto max-h-[calc(100vh-200px)]">
-                <div className="inline-block">
-                  <canvas
-                    ref={canvasRef}
-                    width={seatData.size.width}
-                    height={seatData.size.height}
-                    className={`border border-gray-200 ${selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'}`}
-                    onMouseDown={handleMouseDown}
-                    onMouseMove={handleMouseMove}
-                    onMouseUp={handleMouseUp}
-                    onMouseLeave={handleMouseUp}
-                    onWheel={handleWheel}
-                  />
-                </div>
-                {/* Floating Zoom Controls anchored to scroll container (sticky) */}
-                <div className="sticky left-4 bottom-4 flex flex-col items-start space-y-2 z-20 pointer-events-none">
+              <div ref={containerRef} className="relative flex-1 min-h-0 overflow-hidden bg-gray-100 rounded-b-lg">
+                <canvas
+                  ref={canvasRef}
+                  className={`absolute inset-0 ${
+                    isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'
+                  }`}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
+                />
+                {/* Zoom toolbar */}
+                <div className="absolute bottom-4 right-4 flex items-center bg-white border shadow-md rounded-lg overflow-hidden">
                   <button
-                    onClick={zoomOut}
-                    className="inline-flex items-center justify-center w-10 h-10 bg-white border shadow hover:bg-gray-100 rounded-sm pointer-events-auto"
-                    title="Zoom Out"
+                    onClick={() => zoomAtCenter(0.8)}
+                    className="w-9 h-9 flex items-center justify-center hover:bg-gray-100"
+                    title="Zoom out (-)"
                   >
-                    <ZoomOut className="w-5 h-5" />
+                    <ZoomOut className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={zoomIn}
-                    className="inline-flex items-center justify-center w-10 h-10 bg-white border shadow hover:bg-gray-100 rounded-sm pointer-events-auto"
-                    title="Zoom In"
+                    onClick={resetZoom}
+                    className="w-14 h-9 text-xs font-medium hover:bg-gray-100 tabular-nums"
+                    title="Reset to 100% (0)"
                   >
-                    <ZoomIn className="w-5 h-5" />
+                    {zoomPct}%
+                  </button>
+                  <button
+                    onClick={() => zoomAtCenter(1.25)}
+                    className="w-9 h-9 flex items-center justify-center hover:bg-gray-100"
+                    title="Zoom in (+)"
+                  >
+                    <ZoomIn className="w-4 h-4" />
+                  </button>
+                  <div className="w-px h-5 bg-gray-200" />
+                  <button
+                    onClick={fitToContent}
+                    className="w-9 h-9 flex items-center justify-center hover:bg-gray-100"
+                    title="Fit to content (F)"
+                  >
+                    <Maximize className="w-4 h-4" />
                   </button>
                 </div>
               </div>
@@ -1836,7 +2226,7 @@ const SeatMapEditor: React.FC = () => {
             <div className="p-4 border-t bg-gray-50">
               <div className="flex items-center justify-between text-sm text-gray-600">
                 <span>
-                  Lines: {JSON.stringify(seatData, null, 2).split('\n').length} | 
+                  Lines: {JSON.stringify(seatData, null, 2).split('\n').length} |
                   Characters: {JSON.stringify(seatData, null, 2).length.toLocaleString()}
                 </span>
                 <span className="text-blue-600 font-medium">
@@ -1845,6 +2235,36 @@ const SeatMapEditor: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Numbering & Labels wizard */}
+      {showWizard && seatData && (
+        <NumberingWizard
+          seatData={seatData}
+          selectedSeats={selectedSeats}
+          onClose={() => setShowWizard(false)}
+          onApply={(result: NumberingResult) => {
+            beginGesture();
+            setSeatData(result.next);
+            setSelectedSeats(new Set());
+            setShowWizard(false);
+            showToast(
+              `Applied numbering to ${result.rowsChanged} row(s), ${result.seatsChanged} seat(s).${result.warning ? ` ${result.warning}` : ''}`,
+              result.warning ? 'info' : 'success'
+            );
+          }}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] max-w-xl px-4 py-2.5 rounded-lg shadow-lg text-sm text-white ${
+            toast.type === 'error' ? 'bg-red-600' : toast.type === 'info' ? 'bg-gray-800' : 'bg-green-600'
+          }`}
+        >
+          {toast.message}
         </div>
       )}
     </div>
