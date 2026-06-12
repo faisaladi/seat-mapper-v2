@@ -34,8 +34,10 @@ const SeatMapEditor: React.FC = () => {
   const [dragStart, setDragStart] = useState<Position | null>(null);
   const [dragEnd, setDragEnd] = useState<Position | null>(null);
   const [currentStatus, setCurrentStatus] = useState<string>('available');
-  const [currentCategory, setCurrentCategory] = useState<string>('');
-  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  // Categories are edited by index, not by name: names are ticket UUIDs that
+  // can (accidentally) collide, and name-based identity made duplicates
+  // impossible to disentangle.
+  const [editingCategory, setEditingCategory] = useState<number | null>(null);
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('area');
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
   const [objectProperties, setObjectProperties] = useState<Record<string, string | number>>({});
@@ -403,6 +405,13 @@ const SeatMapEditor: React.FC = () => {
             showToast(`Fixed ${fixedCount} duplicate seat IDs in the uploaded file.`, 'info');
           }
 
+          // Duplicate category names make colors and seat assignment ambiguous
+          const names = (validatedData.categories || []).map((c: Category) => c.name);
+          const dupes = names.filter((n: string, i: number) => names.indexOf(n) !== i);
+          if (dupes.length > 0) {
+            showToast(`Warning: ${dupes.length + 1} categories share the same name/UUID — edit one of them to a unique UUID, then reassign its seats.`, 'error');
+          }
+
           undoStackRef.current = [];
           redoStackRef.current = [];
           setHistoryVersion(v => v + 1);
@@ -712,24 +721,27 @@ const SeatMapEditor: React.FC = () => {
     setSelectedSeats(new Set());
   };
 
-  // Update selected seats category
-  const updateSelectedSeatsCategory = (): void => {
-    if (!seatData || selectedSeats.size === 0 || !currentCategory) return;
+  // Assign the selected seats to a category (from its card in the Categories panel)
+  const assignCategoryToSelection = (categoryIndex: number): void => {
+    if (!seatData || selectedSeats.size === 0) return;
+    const category = seatData.categories[categoryIndex];
+    if (!category) return;
 
     beginGesture();
     const updatedSeatData: SeatData = { ...seatData };
-    
+
     updatedSeatData.zones.forEach((zone: Zone) => {
       zone.rows.forEach((row: Row) => {
         row.seats.forEach((seat: Seat) => {
           if (selectedSeats.has(seat.seat_guid)) {
-            seat.category = currentCategory;
+            seat.category = category.name;
           }
         });
       });
     });
 
     setSeatData(updatedSeatData);
+    showToast(`Assigned ${selectedSeats.size} seat(s) to ${category.label || category.name}`);
     setSelectedSeats(new Set());
   };
 
@@ -1137,37 +1149,51 @@ const SeatMapEditor: React.FC = () => {
     requestRedraw();
   }, [draw, requestRedraw]);
 
-  // Initialize currentCategory when seatData loads
-  useEffect(() => {
-    if (seatData && seatData.categories && seatData.categories.length > 0 && !currentCategory) {
-      setCurrentCategory(seatData.categories[0].name);
-    }
-  }, [seatData, currentCategory]);
-
-  // Update category name
-  const updateCategoryName = (categoryId: string, newName: string): void => {
+  // Update category name (= ticket UUID) by index
+  const updateCategoryName = (categoryIndex: number, newName: string): void => {
     if (!seatData || !newName.trim()) return;
+    const trimmed = newName.trim();
+    const existing = seatData.categories[categoryIndex];
+    if (!existing) return;
+    if (existing.name === trimmed) {
+      setEditingCategory(null);
+      setEditCategoryName('');
+      return;
+    }
+
+    // Names are the only link between seats and categories, so two categories
+    // sharing one name makes colors and assignment ambiguous — block it.
+    if (seatData.categories.some((c: Category, i: number) => i !== categoryIndex && c.name === trimmed)) {
+      showToast('Another category already uses this name/UUID — pick a unique one.', 'error');
+      return;
+    }
 
     beginGesture();
     const updatedSeatData: SeatData = { ...seatData };
-    const categoryIndex = updatedSeatData.categories.findIndex((cat: Category) => cat.name === categoryId);
-    
-    if (categoryIndex !== -1) {
-      const oldName = updatedSeatData.categories[categoryIndex].name;
+    const oldName = existing.name;
 
-      // Update the name (ticket UUID) while preserving color, label and any
-      // other fields — the alias must survive per-show UUID swaps
-      updatedSeatData.categories[categoryIndex] = {
-        ...updatedSeatData.categories[categoryIndex],
-        name: newName.trim()
-      };
-      
+    // Update the name (ticket UUID) while preserving color, label and any
+    // other fields — the alias must survive per-show UUID swaps
+    updatedSeatData.categories[categoryIndex] = {
+      ...existing,
+      name: trimmed
+    };
+
+    // If the old name was duplicated across categories, seats can't be split
+    // by name — leave them pointing at the remaining duplicate so renaming one
+    // card is a safe way OUT of the duplicate state.
+    const oldNameIsShared = updatedSeatData.categories.some(
+      (c: Category, i: number) => i !== categoryIndex && c.name === oldName
+    );
+    if (oldNameIsShared) {
+      showToast('This name was shared by two categories — seats stayed with the other one. Select and assign the seats that belong here.', 'info');
+    } else {
       // Update all seats that reference this category
       updatedSeatData.zones.forEach((zone: Zone) => {
         zone.rows.forEach((row: Row) => {
           row.seats.forEach((seat: Seat) => {
             if (seat.category === oldName) {
-              seat.category = newName.trim();
+              seat.category = trimmed;
             }
           });
         });
@@ -1182,24 +1208,22 @@ const SeatMapEditor: React.FC = () => {
   // Update category display alias (stored as categories[].label inside the
   // JSON — TipTip's importer tolerates the extra field, so the readable name
   // survives the per-show ticket-UUID swap of `name`)
-  const updateCategoryLabel = (categoryName: string, label: string): void => {
-    if (!seatData) return;
+  const updateCategoryLabel = (categoryIndex: number, label: string): void => {
+    if (!seatData || !seatData.categories[categoryIndex]) return;
     const trimmed = label.trim();
-    const idx = seatData.categories.findIndex((c: Category) => c.name === categoryName);
-    if (idx === -1) return;
-    if ((seatData.categories[idx].label || '') === trimmed) return;
+    if ((seatData.categories[categoryIndex].label || '') === trimmed) return;
     beginGesture();
     setSeatData({
       ...seatData,
       categories: seatData.categories.map((c: Category, i: number) =>
-        i === idx ? { ...c, label: trimmed || undefined } : c
+        i === categoryIndex ? { ...c, label: trimmed || undefined } : c
       ),
     });
   };
 
   // Start editing category
-  const startEditingCategory = (categoryId: string, currentName: string): void => {
-    setEditingCategory(categoryId);
+  const startEditingCategory = (categoryIndex: number, currentName: string): void => {
+    setEditingCategory(categoryIndex);
     setEditCategoryName(currentName);
   };
 
@@ -1659,8 +1683,8 @@ const SeatMapEditor: React.FC = () => {
   
   // Handle key press events
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (e.key === 'Enter') {
-      updateCategoryName(editingCategory || '', editCategoryName);
+    if (e.key === 'Enter' && editingCategory !== null) {
+      updateCategoryName(editingCategory, editCategoryName);
     }
     if (e.key === 'Escape') {
       cancelEditingCategory();
@@ -1899,53 +1923,6 @@ const SeatMapEditor: React.FC = () => {
               </div>
             </div>
 
-            {/* Category Selection */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3">Category Update</h3>
-              <div className="w-full border border-gray-300 rounded-lg">
-                <div className="p-2 bg-gray-50 border-b text-sm font-medium text-gray-700">
-                  Select Category:
-                </div>
-                <div className="max-h-32 overflow-y-auto">
-                  <div
-                    className={`p-2 cursor-pointer hover:bg-blue-50 flex items-center space-x-2 ${
-                      currentCategory === '' ? 'bg-blue-100' : ''
-                    }`}
-                    onClick={() => setCurrentCategory('')}
-                  >
-                    <div className="w-4 h-4 border border-gray-300 rounded-full bg-white" />
-                    <span className="text-sm">No Category</span>
-                  </div>
-                  {seatData?.categories.map((category: Category, idx: number) => (
-                    <div
-                      key={idx}
-                      className={`p-2 cursor-pointer hover:bg-blue-50 flex items-center space-x-2 ${
-                        currentCategory === category.name ? 'bg-blue-100' : ''
-                      }`}
-                      onClick={() => setCurrentCategory(category.name)}
-                    >
-                      <div
-                        className="w-4 h-4 rounded-full border border-gray-300"
-                        style={{ backgroundColor: category.color }}
-                      />
-                      <span className="text-sm truncate">{category.label || category.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              
-              <div className="mt-3 space-y-2">
-                <button
-                  onClick={updateSelectedSeatsCategory}
-                  disabled={selectedSeats.size === 0 || !currentCategory}
-                  className="w-full flex items-center justify-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-400 transition-colors"
-                >
-                  <Save className="w-4 h-4 mr-2" />
-                  Update {selectedSeats.size} Selected Seat(s) Category
-                </button>
-              </div>
-            </div>
-
             {/* Legend */}
             <div>
               <h3 className="text-lg font-semibold mb-3">Status Legend</h3>
@@ -2001,11 +1978,11 @@ const SeatMapEditor: React.FC = () => {
                           style={{ backgroundColor: category.color }}
                         />
                         <input
-                          key={`${category.name}:${category.label ?? ''}`}
+                          key={`${idx}:${category.label ?? ''}`}
                           type="text"
                           defaultValue={category.label ?? ''}
                           placeholder="Display name (e.g. VIP)…"
-                          onBlur={(e) => updateCategoryLabel(category.name, e.target.value)}
+                          onBlur={(e) => updateCategoryLabel(idx, e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                           }}
@@ -2015,7 +1992,7 @@ const SeatMapEditor: React.FC = () => {
                           {categoryCounts.get(category.name) || 0} seats
                         </span>
                       </div>
-                      {editingCategory === category.name ? (
+                      {editingCategory === idx ? (
                         <div className="flex items-center space-x-2 pl-7">
                           <input
                             type="text"
@@ -2026,7 +2003,7 @@ const SeatMapEditor: React.FC = () => {
                             onKeyPress={handleKeyPress}
                           />
                           <button
-                            onClick={() => updateCategoryName(category.name, editCategoryName)}
+                            onClick={() => updateCategoryName(idx, editCategoryName)}
                             className="p-1 text-green-600 hover:bg-green-100 rounded"
                           >
                             <Check className="w-4 h-4" />
@@ -2044,13 +2021,21 @@ const SeatMapEditor: React.FC = () => {
                             {category.name}
                           </span>
                           <button
-                            onClick={() => startEditingCategory(category.name, category.name)}
+                            onClick={() => startEditingCategory(idx, category.name)}
                             className="p-1 text-blue-600 hover:bg-blue-100 rounded ml-2 flex-shrink-0"
                             title="Edit ticket UUID"
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
                         </div>
+                      )}
+                      {selectedSeats.size > 0 && (
+                        <button
+                          onClick={() => assignCategoryToSelection(idx)}
+                          className="w-full mt-1 px-2 py-1.5 text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 transition-colors"
+                        >
+                          Assign {selectedSeats.size} selected seat(s)
+                        </button>
                       )}
                     </div>
                   ))}
