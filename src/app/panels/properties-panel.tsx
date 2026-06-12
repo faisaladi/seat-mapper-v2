@@ -1,9 +1,9 @@
 'use client';
 import React, { useRef, useState } from 'react';
 import { Trash2, Check, X, Edit2, Plus } from 'lucide-react';
-import type { SeatData, SelectedObject, Seat, Row, Area, Category, Zone } from './types';
-import type { RowLayout } from './model-ops';
-import { estimateSelectionSagitta } from './model-ops';
+import type { SeatData, SelectedObject, Seat, Row, Area, Category, Zone } from '../model/types';
+import type { RowLayout } from '../model/ops';
+import { estimateSelectionSagitta } from '../model/ops';
 
 // Contextual properties panel (pretix-style): what it shows depends on the
 // current selection — plan / seats marquee / seat / row / area.

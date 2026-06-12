@@ -1,8 +1,8 @@
 'use client';
 import React, { useMemo, useState } from 'react';
 import { X, Wand2 } from 'lucide-react';
-import type { SeatData, Row, Zone, Seat } from './types';
-import { orderedSeatIndices } from './model-ops';
+import type { SeatData, Row, Zone, Seat } from '../model/types';
+import { orderedSeatIndices } from '../model/ops';
 
 export interface NumberingOptions {
   scope: 'all' | 'selected';
