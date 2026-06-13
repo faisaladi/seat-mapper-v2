@@ -666,7 +666,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
               <RotateCw className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
               Rotate selection
             </label>
-            <NumberField label="°" value={0} onCommit={(v) => callbacks.selectionRotate(v, true)} />
+            <NumberField label="Rotation °" value={0} onCommit={(v) => callbacks.selectionRotate(v, true)} />
             <p className="text-xs text-gray-400 mt-0.5">Enter angle and press ↵. Hold ⇧ on handle for 15° snap.</p>
           </div>
         )}

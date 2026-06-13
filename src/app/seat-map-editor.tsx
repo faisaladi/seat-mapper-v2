@@ -87,7 +87,8 @@ const SeatMapEditor: React.FC = () => {
   const groupDragRef = useRef<{ guid: string; offX: number; offY: number; curX: number; curY: number } | null>(null);
   // On-canvas free rotation: dragging the rotation handle above the selection bbox.
   // cumAngle tracks total rotation for shift-snapping; appliedAngle tracks what's been applied.
-  const rotateDragRef = useRef<{ cx: number; cy: number; startAngle: number; cumAngle: number; appliedAngle: number } | null>(null);
+  // areaMode: when set, rotate the area's .rotation prop instead of rotating seat positions.
+  const rotateDragRef = useRef<{ cx: number; cy: number; startAngle: number; cumAngle: number; appliedAngle: number; areaMode?: { zoneIndex: number; areaIndex: number; startRotation: number } } | null>(null);
   const marqueeAdditiveRef = useRef<boolean>(false);
   // Grid + snapping. Snap targets (peer coords) are built once at gesture start;
   // active alignment guides are mirrored in state for rendering.
@@ -371,6 +372,42 @@ const SeatMapEditor: React.FC = () => {
     return { minX, minY, maxX, maxY, cx: sumX / count, cy: sumY / count };
   };
 
+  // Compute rotation handle position for a selected area.
+  // Returns { hx, hy, cx, cy } where (hx,hy) is the handle center and (cx,cy) is the area center.
+  const areaRotationHandle = (area: Area | undefined, zone: Zone): { hx: number; hy: number; cx: number; cy: number } | null => {
+    if (!area) return null;
+    const ax = area.position.x + zone.position.x;
+    const ay = area.position.y + zone.position.y;
+    let cx: number, cy: number, topY: number;
+
+    if (area.shape === 'rectangle' && area.rectangle) {
+      cx = ax + area.rectangle.width / 2;
+      cy = ay + area.rectangle.height / 2;
+      topY = ay;
+    } else if (area.shape === 'circle' && area.circle?.radius) {
+      cx = ax; cy = ay;
+      topY = ay - area.circle.radius;
+    } else if (area.shape === 'ellipse' && area.ellipse?.radius) {
+      cx = ax; cy = ay;
+      topY = ay - area.ellipse.radius.y;
+    } else if (area.shape === 'text' && area.text) {
+      const size = area.text.size || 16;
+      const halfH = Math.max(10, size * 0.75);
+      cx = ax; cy = ay;
+      topY = ay - halfH;
+    } else if (area.shape === 'polygon' && area.polygon?.points) {
+      cx = ax; cy = ay;
+      let minPY = Infinity;
+      for (const p of area.polygon.points) minPY = Math.min(minPY, p.y);
+      topY = ay + minPY;
+    } else {
+      return null;
+    }
+
+    const handleDist = 30 / viewRef.current.scale;
+    return { hx: cx, hy: topY - handleDist, cx, cy };
+  };
+
   // Build the set of peer coordinates to snap against (unique seat + shape
   // centers), excluding the objects currently being moved. Dedup to unique
   // rounded values so a grid collapses to ~rows+cols entries.
@@ -582,6 +619,23 @@ const SeatMapEditor: React.FC = () => {
           if (handle) {
             beginGesture();
             resizeRef.current = { handle, box, zoneIndex: selectedObject.zoneIndex, areaIndex: selectedObject.areaIndex, uniform: isUniform(area) };
+            return;
+          }
+        }
+      }
+      // Rotation handle for the selected area
+      const areaForRotate = zone.areas?.[selectedObject.areaIndex];
+      if (areaForRotate) {
+        const areaBB = areaRotationHandle(areaForRotate, zone);
+        if (areaBB) {
+          const hitR = 8 / viewRef.current.scale;
+          if (Math.hypot(x - areaBB.hx, y - areaBB.hy) <= hitR) {
+            beginGesture();
+            const angle = Math.atan2(y - areaBB.cy, x - areaBB.cx);
+            rotateDragRef.current = {
+              cx: areaBB.cx, cy: areaBB.cy, startAngle: angle, cumAngle: 0, appliedAngle: 0,
+              areaMode: { zoneIndex: selectedObject.zoneIndex, areaIndex: selectedObject.areaIndex, startRotation: areaForRotate.rotation || 0 },
+            };
             return;
           }
         }
@@ -898,7 +952,16 @@ const SeatMapEditor: React.FC = () => {
       const delta = targetAngle - r.appliedAngle;
       if (Math.abs(delta) > 0.05) {
         const next = structuredClone(seatData);
-        rotateSeats(next, selectedSeats, delta);
+        if (r.areaMode) {
+          // Rotate area's rotation property
+          const am = r.areaMode;
+          const area = next.zones[am.zoneIndex].areas?.[am.areaIndex];
+          if (area) {
+            area.rotation = am.startRotation + targetAngle;
+          }
+        } else {
+          rotateSeats(next, selectedSeats, delta);
+        }
         setSeatData(next);
         r.appliedAngle = targetAngle;
       }
@@ -916,6 +979,18 @@ const SeatMapEditor: React.FC = () => {
         if (box && area) {
           const h = hitHandle(box, x, y, 9 / viewRef.current.scale, isUniform(area));
           if (h) cur = handleCursor(h, box.rot);
+        }
+      }
+      // Rotation handle cursor for area
+      if (!cur && selectedObject?.type === 'area' && selectedObject.areaIndex !== undefined) {
+        const zone = seatData.zones[selectedObject.zoneIndex];
+        const area = zone.areas?.[selectedObject.areaIndex];
+        if (area) {
+          const arh = areaRotationHandle(area, zone);
+          if (arh) {
+            const hitR = 8 / viewRef.current.scale;
+            if (Math.hypot(x - arh.hx, y - arh.hy) <= hitR) cur = 'grab';
+          }
         }
       }
       if (!cur && selectedSeats.size > 1) {
@@ -1373,6 +1448,51 @@ const SeatMapEditor: React.FC = () => {
                     ctx.fillRect(ox + n.x - r, oy + n.y - r, r * 2, r * 2);
                     ctx.strokeRect(ox + n.x - r, oy + n.y - r, r * 2, r * 2);
                 }
+            }
+        }
+    }
+
+    // On-canvas rotation handle for selected area
+    if (selectedObject?.type === 'area' && selectedObject.areaIndex !== undefined) {
+        const aZone = seatData.zones[selectedObject.zoneIndex];
+        const aArea = aZone?.areas?.[selectedObject.areaIndex];
+        if (aArea) {
+            const arh = areaRotationHandle(aArea, aZone);
+            if (arh) {
+                const handleR = 5 / view.scale;
+
+                // Stem line
+                ctx.strokeStyle = 'rgba(124, 58, 237, 0.5)';
+                ctx.lineWidth = 1.5 / view.scale;
+                ctx.beginPath();
+                ctx.moveTo(arh.hx, arh.hy + 30 / view.scale);
+                ctx.lineTo(arh.hx, arh.hy);
+                ctx.stroke();
+
+                // Handle circle
+                ctx.fillStyle = '#ffffff';
+                ctx.strokeStyle = '#7c3aed';
+                ctx.lineWidth = 1.5 / view.scale;
+                ctx.beginPath();
+                ctx.arc(arh.hx, arh.hy, handleR, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
+
+                // Rotation icon inside
+                ctx.strokeStyle = '#7c3aed';
+                ctx.lineWidth = 1 / view.scale;
+                ctx.beginPath();
+                ctx.arc(arh.hx, arh.hy, handleR * 0.55, -Math.PI * 0.7, Math.PI * 0.5);
+                ctx.stroke();
+                const tipX = arh.hx + handleR * 0.55 * Math.cos(Math.PI * 0.5);
+                const tipY = arh.hy + handleR * 0.55 * Math.sin(Math.PI * 0.5);
+                const arrowSize = 2.5 / view.scale;
+                ctx.beginPath();
+                ctx.moveTo(tipX, tipY);
+                ctx.lineTo(tipX - arrowSize, tipY - arrowSize);
+                ctx.moveTo(tipX, tipY);
+                ctx.lineTo(tipX + arrowSize, tipY - arrowSize);
+                ctx.stroke();
             }
         }
     }
