@@ -59,6 +59,7 @@ interface Toast {
 const SeatMapEditor: React.FC = () => {
   const [seatData, setSeatData] = useState<SeatData | null>(null);
   const [selectedSeats, setSelectedSeats] = useState<Set<string>>(new Set());
+  const [selectedAreas, setSelectedAreas] = useState<Set<string>>(new Set());
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<Position | null>(null);
   const [dragEnd, setDragEnd] = useState<Position | null>(null);
@@ -671,9 +672,9 @@ const SeatMapEditor: React.FC = () => {
       }
     }
 
-    // Multi-seat selection: shift-click toggles a seat; pressing a seat that's
+    // Multi-selection: shift-click toggles a seat or area; pressing a seat that's
     // already part of a multi-selection drags the whole set. Works in area and
-    // object modes (row mode keeps its row-select behavior).
+    // seats modes (row mode keeps its row-select behavior).
     if (selectionMode !== 'row') {
       const hit = findObjectAtPosition(x, y);
       if (e.shiftKey && hit?.type === 'seat') {
@@ -683,6 +684,20 @@ const SeatMapEditor: React.FC = () => {
           if (nextSel.has(hit.id)) nextSel.delete(hit.id);
           else nextSel.add(hit.id);
           selectedSeatsRef.current = nextSel;
+          return nextSel;
+        });
+        setSelectedObject(null);
+        setObjectProperties({});
+        return;
+      }
+      // Shift-click on area (shape/text): toggle in selectedAreas
+      if (e.shiftKey && hit?.type === 'area' && selectionMode === 'area') {
+        const areaData = hit.data as Area;
+        const uuid = areaData.uuid || hit.id;
+        setSelectedAreas(prev => {
+          const nextSel = new Set(prev);
+          if (nextSel.has(uuid)) nextSel.delete(uuid);
+          else nextSel.add(uuid);
           return nextSel;
         });
         setSelectedObject(null);
@@ -766,6 +781,7 @@ const SeatMapEditor: React.FC = () => {
         setSelectedObject(object);
         setObjectProperties(getObjectProperties(object));
         setSelectedSeats(object.type === 'seat' ? new Set() : new Set());
+        setSelectedAreas(new Set());
 
         // Set up for dragging
         let objectX = 0;
@@ -798,7 +814,10 @@ const SeatMapEditor: React.FC = () => {
       setDragStart({ x, y });
       setDragEnd({ x, y });
       setSelectedObject(null);
-      if (!e.shiftKey) setSelectedSeats(new Set());
+      if (!e.shiftKey) {
+        setSelectedSeats(new Set());
+        setSelectedAreas(new Set());
+      }
     } else if (selectionMode === 'seats') {
       // Seats-only marquee selection (no shape/text selection).
       // Shift = add to the existing selection instead of replacing it.
@@ -1193,6 +1212,29 @@ const SeatMapEditor: React.FC = () => {
 
     marqueeAdditiveRef.current = false;
     setSelectedSeats(newSelectedSeats);
+
+    // In area mode, also select shapes/text whose position falls within the marquee
+    if (selectionMode === 'area') {
+      const newSelectedAreas = new Set<string>();
+      seatData.zones.forEach((zone: Zone) => {
+        (zone.areas || []).forEach((area: Area) => {
+          const ax = area.position.x + zone.position.x;
+          const ay = area.position.y + zone.position.y;
+          // For rectangles, use center; for others use position
+          let cx = ax, cy = ay;
+          if (area.shape === 'rectangle' && area.rectangle) {
+            cx = ax + area.rectangle.width / 2;
+            cy = ay + area.rectangle.height / 2;
+          }
+          if (cx >= minX && cx <= maxX && cy >= minY && cy <= maxY) {
+            if (area.uuid) newSelectedAreas.add(area.uuid);
+          }
+        });
+      });
+      setSelectedAreas(newSelectedAreas);
+    } else {
+      setSelectedAreas(new Set());
+    }
   };
 
   // Select entire rows that have at least one seat inside the drag area
@@ -1519,6 +1561,58 @@ const SeatMapEditor: React.FC = () => {
         }
     }
 
+    // Highlight multi-selected areas (shapes/text)
+    if (selectedAreas.size > 0) {
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 2.5 / view.scale;
+        ctx.setLineDash([6 / view.scale, 4 / view.scale]);
+        seatData.zones.forEach((zone: Zone) => {
+            (zone.areas || []).forEach((area: Area) => {
+                if (!area.uuid || !selectedAreas.has(area.uuid)) return;
+                const ax = area.position.x + zone.position.x;
+                const ay = area.position.y + zone.position.y;
+
+                if (area.shape === 'rectangle' && area.rectangle) {
+                    const w = area.rectangle.width, h = area.rectangle.height;
+                    ctx.save();
+                    ctx.translate(ax + w / 2, ay + h / 2);
+                    if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
+                    ctx.strokeRect(-w / 2 - 3, -h / 2 - 3, w + 6, h + 6);
+                    ctx.restore();
+                } else if (area.shape === 'circle' && area.circle?.radius) {
+                    ctx.beginPath();
+                    ctx.arc(ax, ay, area.circle.radius + 3, 0, 2 * Math.PI);
+                    ctx.stroke();
+                } else if (area.shape === 'ellipse' && area.ellipse?.radius) {
+                    ctx.beginPath();
+                    ctx.ellipse(ax, ay, area.ellipse.radius.x + 3, area.ellipse.radius.y + 3, area.rotation ? (area.rotation * Math.PI) / 180 : 0, 0, 2 * Math.PI);
+                    ctx.stroke();
+                } else if (area.shape === 'text' && area.text) {
+                    const size = area.text.size || 16;
+                    const halfW = Math.max(16, (area.text.text?.length || 1) * size * 0.32);
+                    const halfH = Math.max(10, size * 0.75);
+                    ctx.save();
+                    ctx.translate(ax, ay);
+                    if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
+                    ctx.strokeRect(-halfW - 3, -halfH - 3, (halfW + 3) * 2, (halfH + 3) * 2);
+                    ctx.restore();
+                } else if (area.shape === 'polygon' && area.polygon?.points) {
+                    ctx.save();
+                    ctx.translate(ax, ay);
+                    if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
+                    const pts = area.polygon.points;
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0].x, pts[0].y);
+                    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+                    ctx.closePath();
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            });
+        });
+        ctx.setLineDash([]);
+    }
+
     // Highlight selected seats
     if (selectedSeats.size > 0) {
         ctx.strokeStyle = '#fbbf24';
@@ -1712,7 +1806,7 @@ const SeatMapEditor: React.FC = () => {
     }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-  }, [seatData, contentMetrics, paintContent, selectedSeats, isDragging, dragStart, dragEnd, selectedObject, shapeDraft, pendingShape, showGrid, snapGuides, penActive]);
+  }, [seatData, contentMetrics, paintContent, selectedSeats, selectedAreas, isDragging, dragStart, dragEnd, selectedObject, shapeDraft, pendingShape, showGrid, snapGuides, penActive]);
 
   // Keep the rAF loop pointed at the latest draw closure; redraw on state changes
   useEffect(() => {
@@ -2344,6 +2438,7 @@ const SeatMapEditor: React.FC = () => {
     const sel = selectedObjectRef.current;
     const seats = selectedSeatsRef.current;
 
+    // Single object deletion (row, area, seat)
     if (sel?.type === 'row' && sel.rowIndex !== undefined) {
       beginGesture();
       const next = structuredClone(data);
@@ -2362,19 +2457,39 @@ const SeatMapEditor: React.FC = () => {
       deleteSeats(next, new Set([sel.id]));
       setSeatData(next);
       showToast('Deleted seat');
-    } else if (seats.size > 0) {
+    } else if (seats.size > 0 || selectedAreas.size > 0) {
       beginGesture();
       const next = structuredClone(data);
-      const removed = deleteSeats(next, seats);
+      let removedSeats = 0;
+      let removedAreas = 0;
+      if (seats.size > 0) {
+        removedSeats = deleteSeats(next, seats);
+      }
+      // Delete multi-selected areas (by UUID, iterate in reverse to keep indices valid)
+      if (selectedAreas.size > 0) {
+        for (const zone of next.zones) {
+          if (!zone.areas) continue;
+          for (let i = zone.areas.length - 1; i >= 0; i--) {
+            if (zone.areas[i].uuid && selectedAreas.has(zone.areas[i].uuid!)) {
+              zone.areas.splice(i, 1);
+              removedAreas++;
+            }
+          }
+        }
+      }
       setSeatData(next);
-      showToast(`Deleted ${removed} seat(s)`);
+      const parts: string[] = [];
+      if (removedSeats > 0) parts.push(`${removedSeats} seat(s)`);
+      if (removedAreas > 0) parts.push(`${removedAreas} shape(s)`);
+      showToast(`Deleted ${parts.join(' and ')}`);
     } else {
       return;
     }
     setSelectedObject(null);
     setSelectedSeats(new Set());
+    setSelectedAreas(new Set());
     setObjectProperties({});
-  }, [beginGesture, showToast]);
+  }, [beginGesture, showToast, selectedAreas]);
 
   // Arrow-key nudge; rapid presses share one undo step
   const nudgeGestureAtRef = useRef<number>(0);
@@ -2456,6 +2571,7 @@ const SeatMapEditor: React.FC = () => {
   const toggleSelectionMode = (mode: SelectionMode): void => {
     setSelectionMode(mode);
     setSelectedSeats(new Set());
+    setSelectedAreas(new Set());
     setSelectedObject(null);
     setObjectProperties({});
   };
@@ -2727,6 +2843,7 @@ const SeatMapEditor: React.FC = () => {
             seatData={seatData}
             selectedObject={selectedObject}
             selectedSeats={selectedSeats}
+            selectedAreas={selectedAreas}
             rowLayout={selectedRowLayout}
             categoryCounts={categoryCounts}
             callbacks={{

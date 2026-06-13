@@ -41,6 +41,7 @@ interface PropertiesPanelProps {
   seatData: SeatData;
   selectedObject: SelectedObject | null;
   selectedSeats: Set<string>;
+  selectedAreas: Set<string>;
   rowLayout: RowLayout | null;
   categoryCounts: Map<string, number>;
   callbacks: PanelCallbacks;
@@ -418,7 +419,7 @@ const CategoryBreakdown: React.FC<{ seatData: SeatData }> = ({ seatData }) => {
   );
 };
 
-const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObject, selectedSeats, rowLayout, categoryCounts, callbacks }) => {
+const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObject, selectedSeats, selectedAreas, rowLayout, categoryCounts, callbacks }) => {
   // Curve slider: live preview while dragging, single undo step (gesture
   // starts on pointer-down, layout changes are applied without new gestures)
   const dragSpacingRef = useRef<number>(25);
@@ -594,10 +595,15 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
         <DeleteButton label="Delete shape" onClick={callbacks.deleteSelection} />
       </div>
     );
-  } else if (selectedSeats.size > 0) {
+  } else if (selectedSeats.size > 0 || selectedAreas.size > 0) {
     content = (
       <div className="space-y-3">
-        <div className={sectionCls}>{selectedSeats.size} seats selected</div>
+        <div className={sectionCls}>
+          {selectedSeats.size > 0 ? `${selectedSeats.size} seat${selectedSeats.size !== 1 ? 's' : ''}` : ''}
+          {selectedSeats.size > 0 && selectedAreas.size > 0 ? ' + ' : ''}
+          {selectedAreas.size > 0 ? `${selectedAreas.size} shape${selectedAreas.size !== 1 ? 's' : ''}` : ''}
+          {' '}selected
+        </div>
         <div className="space-y-2">
           <SelectField
             label="Set status"
