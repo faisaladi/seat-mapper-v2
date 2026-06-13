@@ -366,6 +366,33 @@ const SeatMapEditor: React.FC = () => {
     snapTargetsRef.current = { xs: [...xs], ys: [...ys] };
   };
 
+  // For group-move: the selected seat to grab when pressing at (x,y). Tests
+  // the SELECTED seats directly (so overlapping unselected seats — e.g. just
+  // after a paste — don't steal the press). With Move on, pressing anywhere
+  // inside the selection's bounding box grabs the nearest selected seat too.
+  const grabSelectedSeat = (x: number, y: number): string | null => {
+    const seats = selectedSeatsRef.current;
+    if (seats.size === 0) return null;
+    let onSeat: string | null = null;
+    let nearest: string | null = null;
+    let nearestD = Infinity;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    seats.forEach(guid => {
+      const p = contentMetrics.positions.get(guid);
+      if (!p) return;
+      if (p.x - p.radius < minX) minX = p.x - p.radius;
+      if (p.y - p.radius < minY) minY = p.y - p.radius;
+      if (p.x + p.radius > maxX) maxX = p.x + p.radius;
+      if (p.y + p.radius > maxY) maxY = p.y + p.radius;
+      const d = Math.hypot(x - p.x, y - p.y);
+      if (d <= p.radius && d < nearestD) { onSeat = guid; }
+      if (d < nearestD) { nearestD = d; nearest = guid; }
+    });
+    if (onSeat) return onSeat;
+    if (isMoveEnabled && x >= minX && x <= maxX && y >= minY && y <= maxY) return nearest;
+    return null;
+  };
+
   // Snap a world point against peers + grid; records guides for rendering.
   const snapWorld = (x: number, y: number): { x: number; y: number } => {
     const tol = 7 / viewRef.current.scale;
@@ -563,14 +590,19 @@ const SeatMapEditor: React.FC = () => {
         setObjectProperties({});
         return;
       }
-      if (hit?.type === 'seat' && selectedSeats.size > 1 && selectedSeats.has(hit.id)) {
-        beginGesture();
-        const c = contentMetrics.positions.get(hit.id);
-        const cx = c?.x ?? x;
-        const cy = c?.y ?? y;
-        buildSnapTargets(selectedSeats);
-        groupDragRef.current = { guid: hit.id, offX: cx - x, offY: cy - y, curX: cx, curY: cy };
-        return;
+      // Group move: grab the selection (tests selected seats directly, so a
+      // post-paste overlap doesn't break it; Move mode also grabs from gaps).
+      if (selectedSeats.size > 1) {
+        const grab = grabSelectedSeat(x, y);
+        if (grab) {
+          const c = contentMetrics.positions.get(grab);
+          const cx = c?.x ?? x;
+          const cy = c?.y ?? y;
+          beginGesture();
+          buildSnapTargets(selectedSeats);
+          groupDragRef.current = { guid: grab, offX: cx - x, offY: cy - y, curX: cx, curY: cy };
+          return;
+        }
       }
     }
 
@@ -799,21 +831,21 @@ const SeatMapEditor: React.FC = () => {
       return;
     }
 
-    // Hover feedback: show a resize cursor over a selected shape's handles
-    if (!isDragging && !isDraggingObject && selectedObject?.type === 'area' && selectedObject.areaIndex !== undefined) {
-      const zone = seatData.zones[selectedObject.zoneIndex];
-      const area = zone.areas?.[selectedObject.areaIndex];
-      const box = area && isResizable(area) ? areaToBox(area, zone.position.x, zone.position.y) : null;
-      if (box && area) {
-        const tol = 9 / viewRef.current.scale;
-        const h = hitHandle(box, x, y, tol, isUniform(area));
-        const cur = h ? handleCursor(h, box.rot) : null;
-        if (cur !== hoverCursor) setHoverCursor(cur);
-      } else if (hoverCursor) {
-        setHoverCursor(null);
+    // Hover feedback: resize cursor over a shape's handles; move cursor over a
+    // multi-seat selection (so it's clear the group can be dragged).
+    if (!isDragging && !isDraggingObject && !groupDragRef.current && !resizeRef.current) {
+      let cur: string | null = null;
+      if (selectedObject?.type === 'area' && selectedObject.areaIndex !== undefined) {
+        const zone = seatData.zones[selectedObject.zoneIndex];
+        const area = zone.areas?.[selectedObject.areaIndex];
+        const box = area && isResizable(area) ? areaToBox(area, zone.position.x, zone.position.y) : null;
+        if (box && area) {
+          const h = hitHandle(box, x, y, 9 / viewRef.current.scale, isUniform(area));
+          if (h) cur = handleCursor(h, box.rot);
+        }
       }
-    } else if (hoverCursor && !resizeRef.current) {
-      setHoverCursor(null);
+      if (!cur && selectedSeats.size > 1 && grabSelectedSeat(x, y)) cur = 'move';
+      if (cur !== hoverCursor) setHoverCursor(cur);
     }
 
     if (isDragging) {
