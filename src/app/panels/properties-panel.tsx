@@ -666,20 +666,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
               <RotateCw className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
               Rotate selection
             </label>
-            <div className="flex flex-wrap gap-1.5">
-              {[{label: '-90°', v: -90}, {label: '-45°', v: -45}, {label: '-15°', v: -15}, {label: '+15°', v: 15}, {label: '+45°', v: 45}, {label: '+90°', v: 90}].map(btn => (
-                <button
-                  key={btn.v}
-                  onClick={() => callbacks.selectionRotate(btn.v, true)}
-                  className="px-2 py-1 text-xs bg-gray-100 border rounded hover:bg-purple-50 hover:border-purple-300 transition-colors tabular-nums"
-                >
-                  {btn.label}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center mt-1.5">
-              <NumberField label="Custom °" value={0} onCommit={(v) => callbacks.selectionRotate(v, true)} />
-            </div>
+            <NumberField label="°" value={0} onCommit={(v) => callbacks.selectionRotate(v, true)} />
+            <p className="text-xs text-gray-400 mt-0.5">Enter angle and press ↵. Hold ⇧ on handle for 15° snap.</p>
           </div>
         )}
         <InlineNumbering selectedCount={selectedSeats.size} onApply={callbacks.applyInlineNumbering} />
