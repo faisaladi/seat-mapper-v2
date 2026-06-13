@@ -85,10 +85,17 @@ const SeatMapEditor: React.FC = () => {
   const polyEditRef = useRef<{ kind: 'anchor' | 'hIn' | 'hOut'; index: number } | null>(null);
   // Multi-select: drag-moving a whole seat selection, and additive marquee (shift)
   const groupDragRef = useRef<{ guid: string; offX: number; offY: number; curX: number; curY: number } | null>(null);
+  // Multi-area group drag: drag-moving all selectedAreas together
+  const areaGroupDragRef = useRef<{ startX: number; startY: number; origins: Map<string, { x: number; y: number }> } | null>(null);
   // On-canvas free rotation: dragging the rotation handle above the selection bbox.
   // cumAngle tracks total rotation for shift-snapping; appliedAngle tracks what's been applied.
   // areaMode: when set, rotate the area's .rotation prop instead of rotating seat positions.
-  const rotateDragRef = useRef<{ cx: number; cy: number; startAngle: number; cumAngle: number; appliedAngle: number; areaMode?: { zoneIndex: number; areaIndex: number; startRotation: number } } | null>(null);
+  // areaGroupMode: when set, rotate all selectedAreas around a group center.
+  const rotateDragRef = useRef<{
+    cx: number; cy: number; startAngle: number; cumAngle: number; appliedAngle: number;
+    areaMode?: { zoneIndex: number; areaIndex: number; startRotation: number };
+    areaGroupMode?: { origins: Map<string, { x: number; y: number; rot: number }> };
+  } | null>(null);
   const marqueeAdditiveRef = useRef<boolean>(false);
   // Grid + snapping. Snap targets (peer coords) are built once at gesture start;
   // active alignment guides are mirrored in state for rendering.
@@ -427,6 +434,42 @@ const SeatMapEditor: React.FC = () => {
     return { hx, hy, stemX, stemY, cx, cy };
   };
 
+  // Compute a world-space bounding box around all areas in selectedAreas.
+  const areaGroupBBox = (): { minX: number; minY: number; maxX: number; maxY: number } | null => {
+    if (!seatData || selectedAreas.size === 0) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let found = false;
+    seatData.zones.forEach((zone: Zone) => {
+      (zone.areas || []).forEach((area: Area) => {
+        if (!area.uuid || !selectedAreas.has(area.uuid)) return;
+        found = true;
+        const ax = area.position.x + zone.position.x;
+        const ay = area.position.y + zone.position.y;
+        if (area.shape === 'rectangle' && area.rectangle) {
+          minX = Math.min(minX, ax); minY = Math.min(minY, ay);
+          maxX = Math.max(maxX, ax + area.rectangle.width); maxY = Math.max(maxY, ay + area.rectangle.height);
+        } else if (area.shape === 'circle' && area.circle?.radius) {
+          const r = area.circle.radius;
+          minX = Math.min(minX, ax - r); minY = Math.min(minY, ay - r);
+          maxX = Math.max(maxX, ax + r); maxY = Math.max(maxY, ay + r);
+        } else if (area.shape === 'ellipse' && area.ellipse?.radius) {
+          minX = Math.min(minX, ax - area.ellipse.radius.x); minY = Math.min(minY, ay - area.ellipse.radius.y);
+          maxX = Math.max(maxX, ax + area.ellipse.radius.x); maxY = Math.max(maxY, ay + area.ellipse.radius.y);
+        } else if (area.shape === 'text' && area.text) {
+          const s = area.text.size || 16;
+          minX = Math.min(minX, ax - 20); minY = Math.min(minY, ay - s);
+          maxX = Math.max(maxX, ax + 20); maxY = Math.max(maxY, ay + s);
+        } else if (area.shape === 'polygon' && area.polygon?.points) {
+          for (const p of area.polygon.points) {
+            minX = Math.min(minX, ax + p.x); minY = Math.min(minY, ay + p.y);
+            maxX = Math.max(maxX, ax + p.x); maxY = Math.max(maxY, ay + p.y);
+          }
+        }
+      });
+    });
+    return found ? { minX, minY, maxX, maxY } : null;
+  };
+
   // Build the set of peer coordinates to snap against (unique seat + shape
   // centers), excluding the objects currently being moved. Dedup to unique
   // rounded values so a grid collapses to ~rows+cols entries.
@@ -704,6 +747,52 @@ const SeatMapEditor: React.FC = () => {
         setObjectProperties({});
         return;
       }
+      // Multi-area group: rotation handle + group drag
+      if (selectedAreas.size > 0 && seatData) {
+        // Compute bounding box of all selected areas
+        const groupBB = areaGroupBBox();
+        if (groupBB) {
+          // Check rotation handle
+          const handleDist = 30 / viewRef.current.scale;
+          const handleX = (groupBB.minX + groupBB.maxX) / 2;
+          const handleY = groupBB.minY - handleDist;
+          const hitR = 8 / viewRef.current.scale;
+          if (Math.hypot(x - handleX, y - handleY) <= hitR) {
+            beginGesture();
+            const gcx = (groupBB.minX + groupBB.maxX) / 2;
+            const gcy = (groupBB.minY + groupBB.maxY) / 2;
+            const angle = Math.atan2(y - gcy, x - gcx);
+            // Store original positions + rotations for all selected areas
+            const origins = new Map<string, { x: number; y: number; rot: number }>();
+            seatData.zones.forEach((zone: Zone) => {
+              (zone.areas || []).forEach((area: Area) => {
+                if (area.uuid && selectedAreas.has(area.uuid)) {
+                  origins.set(area.uuid, { x: area.position.x, y: area.position.y, rot: area.rotation || 0 });
+                }
+              });
+            });
+            rotateDragRef.current = {
+              cx: gcx, cy: gcy, startAngle: angle, cumAngle: 0, appliedAngle: 0,
+              areaGroupMode: { origins },
+            };
+            return;
+          }
+          // Check group drag: click inside the bounding box of selected areas
+          if (x >= groupBB.minX && x <= groupBB.maxX && y >= groupBB.minY && y <= groupBB.maxY) {
+            beginGesture();
+            const origins = new Map<string, { x: number; y: number }>();
+            seatData.zones.forEach((zone: Zone) => {
+              (zone.areas || []).forEach((area: Area) => {
+                if (area.uuid && selectedAreas.has(area.uuid)) {
+                  origins.set(area.uuid, { x: area.position.x, y: area.position.y });
+                }
+              });
+            });
+            areaGroupDragRef.current = { startX: x, startY: y, origins };
+            return;
+          }
+        }
+      }
       // Rotation handle: check before group-move so the handle takes priority
       if (selectedSeats.size > 1) {
         const bb = selectionBBox();
@@ -972,6 +1061,24 @@ const SeatMapEditor: React.FC = () => {
       return;
     }
 
+    // Multi-area group drag: move all selected areas by the mouse delta
+    if (areaGroupDragRef.current) {
+      const g = areaGroupDragRef.current;
+      const dx = x - g.startX;
+      const dy = y - g.startY;
+      const next = structuredClone(seatData);
+      next.zones.forEach((zone: Zone) => {
+        (zone.areas || []).forEach((area: Area) => {
+          if (!area.uuid || !g.origins.has(area.uuid)) return;
+          const orig = g.origins.get(area.uuid)!;
+          area.position.x = orig.x + dx;
+          area.position.y = orig.y + dy;
+        });
+      });
+      setSeatData(next);
+      return;
+    }
+
     // Free rotation: compute angle from the centroid to the mouse.
     // Shift = snap to 15° increments from the gesture start.
     if (rotateDragRef.current) {
@@ -1000,6 +1107,27 @@ const SeatMapEditor: React.FC = () => {
             // Update selectedObject so the sidebar Rotation field reflects live value
             setSelectedObject(prev => prev ? { ...prev, data: area } : prev);
           }
+        } else if (r.areaGroupMode) {
+          // Rotate all selected areas around the group center
+          const agm = r.areaGroupMode;
+          const rad = (targetAngle * Math.PI) / 180;
+          const cosR = Math.cos(rad), sinR = Math.sin(rad);
+          next.zones.forEach((zone: Zone) => {
+            (zone.areas || []).forEach((area: Area) => {
+              if (!area.uuid || !agm.origins.has(area.uuid)) return;
+              const orig = agm.origins.get(area.uuid)!;
+              // Rotate position around group center (zone-relative)
+              const zx = zone.position.x, zy = zone.position.y;
+              const origWX = orig.x + zx, origWY = orig.y + zy;
+              const dx = origWX - r.cx, dy = origWY - r.cy;
+              const newWX = r.cx + dx * cosR - dy * sinR;
+              const newWY = r.cy + dx * sinR + dy * cosR;
+              area.position.x = newWX - zx;
+              area.position.y = newWY - zy;
+              // Add rotation to individual area rotation
+              area.rotation = ((Math.round(orig.rot + targetAngle) % 360) + 360) % 360;
+            });
+          });
         } else {
           rotateSeats(next, selectedSeats, delta);
         }
@@ -1045,6 +1173,19 @@ const SeatMapEditor: React.FC = () => {
           if (Math.hypot(x - handleX, y - handleY) <= hitR) cur = 'grab';
         }
         if (!cur && grabSelectedSeat(x, y)) cur = 'move';
+      }
+      // Multi-area group cursor: rotation handle or move inside bbox
+      if (!cur && selectedAreas.size > 1) {
+        const gbb = areaGroupBBox();
+        if (gbb) {
+          const pad = 6 / viewRef.current.scale;
+          const handleDist = 30 / viewRef.current.scale;
+          const handleX = (gbb.minX + gbb.maxX) / 2;
+          const handleY = gbb.minY - pad - handleDist;
+          const hitR = 8 / viewRef.current.scale;
+          if (Math.hypot(x - handleX, y - handleY) <= hitR) cur = 'grab';
+          else if (x >= gbb.minX && x <= gbb.maxX && y >= gbb.minY && y <= gbb.maxY) cur = 'move';
+        }
       }
       if (cur !== hoverCursor) setHoverCursor(cur);
     }
@@ -1168,6 +1309,7 @@ const SeatMapEditor: React.FC = () => {
     }
     resizeRef.current = null;
     groupDragRef.current = null;
+    areaGroupDragRef.current = null;
     rotateDragRef.current = null;
     polyEditRef.current = null;
     setSnapGuides({ x: null, y: null });
@@ -1611,6 +1753,59 @@ const SeatMapEditor: React.FC = () => {
             });
         });
         ctx.setLineDash([]);
+
+        // Group bounding box + rotation handle for multi-selected areas
+        if (selectedAreas.size > 1) {
+            const gbb = areaGroupBBox();
+            if (gbb) {
+                const pad = 6 / view.scale;
+                // Bounding box
+                ctx.strokeStyle = '#7c3aed';
+                ctx.lineWidth = 1.5 / view.scale;
+                ctx.setLineDash([5 / view.scale, 3 / view.scale]);
+                ctx.strokeRect(gbb.minX - pad, gbb.minY - pad, gbb.maxX - gbb.minX + pad * 2, gbb.maxY - gbb.minY + pad * 2);
+                ctx.setLineDash([]);
+
+                // Rotation handle
+                const handleDist = 30 / view.scale;
+                const handleX = (gbb.minX + gbb.maxX) / 2;
+                const handleY = gbb.minY - pad - handleDist;
+                const handleR = 5 / view.scale;
+
+                // Stem
+                ctx.strokeStyle = 'rgba(124, 58, 237, 0.5)';
+                ctx.lineWidth = 1.5 / view.scale;
+                ctx.beginPath();
+                ctx.moveTo(handleX, gbb.minY - pad);
+                ctx.lineTo(handleX, handleY);
+                ctx.stroke();
+
+                // Circle
+                ctx.fillStyle = '#ffffff';
+                ctx.strokeStyle = '#7c3aed';
+                ctx.lineWidth = 1.5 / view.scale;
+                ctx.beginPath();
+                ctx.arc(handleX, handleY, handleR, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
+
+                // Rotation icon
+                ctx.strokeStyle = '#7c3aed';
+                ctx.lineWidth = 1 / view.scale;
+                ctx.beginPath();
+                ctx.arc(handleX, handleY, handleR * 0.55, -Math.PI * 0.7, Math.PI * 0.5);
+                ctx.stroke();
+                const tipX = handleX + handleR * 0.55 * Math.cos(Math.PI * 0.5);
+                const tipY = handleY + handleR * 0.55 * Math.sin(Math.PI * 0.5);
+                const arrowSize = 2.5 / view.scale;
+                ctx.beginPath();
+                ctx.moveTo(tipX, tipY);
+                ctx.lineTo(tipX - arrowSize, tipY - arrowSize);
+                ctx.moveTo(tipX, tipY);
+                ctx.lineTo(tipX + arrowSize, tipY - arrowSize);
+                ctx.stroke();
+            }
+        }
     }
 
     // Highlight selected seats
