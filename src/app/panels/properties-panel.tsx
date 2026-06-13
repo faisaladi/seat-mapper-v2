@@ -1,9 +1,10 @@
 'use client';
 import React, { useRef, useState, useMemo } from 'react';
-import { Trash2, Check, X, Edit2, Plus, BringToFront, SendToBack, ChevronUp, ChevronDown, ChevronRight, Copy } from 'lucide-react';
+import { Trash2, Check, X, Edit2, Plus, BringToFront, SendToBack, ChevronUp, ChevronDown, ChevronRight, RotateCw, Copy } from 'lucide-react';
 import type { SeatData, SelectedObject, Seat, Row, Area, Category, Zone } from '../model/types';
 import type { RowLayout } from '../model/ops';
 import { estimateSelectionSagitta } from '../model/ops';
+import { type NumberingOptions, DEFAULT_OPTIONS } from './numbering-wizard';
 
 // Contextual properties panel (pretix-style): what it shows depends on the
 // current selection — plan / seats marquee / seat / row / area.
@@ -29,6 +30,9 @@ export interface PanelCallbacks {
   selectCategorySeats: (categoryIndex: number) => void;
   selectionBendStart: () => void;
   selectionBendChange: (sagitta: number, gesture: boolean) => void;
+  selectionRotateStart: () => void;
+  selectionRotate: (angleDeg: number, gesture: boolean) => void;
+  applyInlineNumbering: (opts: NumberingOptions) => void;
   arrangeArea: (dir: 'front' | 'back' | 'forward' | 'backward') => void;
   duplicate: () => void;
 }
@@ -141,6 +145,184 @@ const categoryOptions = (categories: Category[], extra?: { value: string; label:
   const opts = categories.map(c => ({ value: c.name, label: c.label || c.name.slice(0, 18) + '…' }));
   return extra ? [extra, ...opts] : opts;
 };
+
+// Inline numbering panel (pretix-style) — operates on the rows of selected seats
+const InlineNumbering: React.FC<{ selectedCount: number; onApply: (opts: NumberingOptions) => void }> = ({ selectedCount, onApply }) => {
+  const [open, setOpen] = useState(false);
+  const [rowMode, setRowMode] = useState<'keep' | 'letters' | 'numbers'>('letters');
+  const [rowStart, setRowStart] = useState('A');
+  const [rowReversed, setRowReversed] = useState(true); // bottom-up by default
+  const [seatScheme, setSeatScheme] = useState<'keep' | 'numeric'>('numeric');
+  const [seatStart, setSeatStart] = useState(1);
+  const [seatReversed, setSeatReversed] = useState(false);
+  const [template, setTemplate] = useState('{row}{n}');
+
+  const apply = () => {
+    onApply({
+      scope: 'selected',
+      rowNameMode: rowMode,
+      rowNameStart: rowStart,
+      rowOrderBottomUp: rowReversed,
+      customRowNames: '',
+      seatScheme,
+      seatStart,
+      seatReversed,
+      continueAcrossRows: false,
+      template,
+      mode: 'tiptip',
+      showStart: true,
+      showEnd: true,
+    });
+  };
+
+  const toggleCls = (on: boolean) =>
+    `relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${on ? 'bg-purple-600' : 'bg-gray-300'}`;
+  const dotCls = (on: boolean) =>
+    `inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`;
+
+  return (
+    <div className="space-y-2">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`${sectionCls} w-full flex items-center justify-between cursor-pointer hover:text-blue-600 transition-colors`}
+      >
+        <span>Numbering</span>
+        <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && (
+        <div className="space-y-3 border rounded-lg p-2.5 bg-gray-50">
+          {/* Row numbers */}
+          <div className="space-y-1.5">
+            <div className="text-xs font-semibold text-gray-600">Row numbers</div>
+            <div className="flex items-center justify-between">
+              <span className={labelCls}>Numbering</span>
+              <select
+                value={rowMode}
+                onChange={e => setRowMode(e.target.value as 'keep' | 'letters' | 'numbers')}
+                className="text-xs border rounded px-2 py-1 bg-white"
+              >
+                <option value="letters">A, B, C, …</option>
+                <option value="numbers">1, 2, 3, …</option>
+                <option value="keep">Keep</option>
+              </select>
+            </div>
+            {rowMode !== 'keep' && (
+              <div className="flex items-center justify-between">
+                <span className={labelCls}>Starting at</span>
+                <div className="flex items-center space-x-1">
+                  <button
+                    onClick={() => {
+                      if (rowMode === 'numbers') setSeatStart(v => Math.max(0, (parseInt(rowStart, 10) || 1) - 1) || 1);
+                      setRowStart(prev => {
+                        if (rowMode === 'numbers') return String(Math.max(1, (parseInt(prev, 10) || 1) - 1));
+                        return prev === 'A' ? 'A' : String.fromCharCode(prev.charCodeAt(0) - 1);
+                      });
+                    }}
+                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-gray-100"
+                  >—</button>
+                  <input
+                    value={rowStart}
+                    onChange={e => setRowStart(e.target.value)}
+                    className="w-10 text-center text-xs border rounded px-1 py-0.5"
+                  />
+                  <button
+                    onClick={() => {
+                      setRowStart(prev => {
+                        if (rowMode === 'numbers') return String((parseInt(prev, 10) || 0) + 1);
+                        return String.fromCharCode(Math.min(90, prev.charCodeAt(0) + 1));
+                      });
+                    }}
+                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-gray-100"
+                  >+</button>
+                </div>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className={labelCls}>Bottom-up</span>
+              <button className={toggleCls(rowReversed)} onClick={() => setRowReversed(v => !v)}>
+                <span className={dotCls(rowReversed)} />
+              </button>
+            </div>
+          </div>
+
+          {/* Seat numbers */}
+          <div className="space-y-1.5 border-t pt-2">
+            <div className="text-xs font-semibold text-gray-600">Seat numbers</div>
+            <div className="flex items-center justify-between">
+              <span className={labelCls}>Numbering</span>
+              <select
+                value={seatScheme}
+                onChange={e => setSeatScheme(e.target.value as 'keep' | 'numeric')}
+                className="text-xs border rounded px-2 py-1 bg-white"
+              >
+                <option value="numeric">1, 2, 3, …</option>
+                <option value="keep">Keep</option>
+              </select>
+            </div>
+            {seatScheme !== 'keep' && (
+              <div className="flex items-center justify-between">
+                <span className={labelCls}>Starting at</span>
+                <div className="flex items-center space-x-1">
+                  <button
+                    onClick={() => setSeatStart(v => Math.max(0, v - 1))}
+                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-gray-100"
+                  >—</button>
+                  <input
+                    type="number"
+                    value={seatStart}
+                    onChange={e => setSeatStart(parseInt(e.target.value, 10) || 0)}
+                    className="w-10 text-center text-xs border rounded px-1 py-0.5"
+                  />
+                  <button
+                    onClick={() => setSeatStart(v => v + 1)}
+                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-gray-100"
+                  >+</button>
+                </div>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className={labelCls}>Reversed</span>
+              <button className={toggleCls(seatReversed)} onClick={() => setSeatReversed(v => !v)}>
+                <span className={dotCls(seatReversed)} />
+              </button>
+            </div>
+          </div>
+
+          {/* Label template */}
+          <div className="space-y-1.5 border-t pt-2">
+            <div className="flex items-center justify-between">
+              <span className={labelCls}>Seat label</span>
+              <input
+                value={template}
+                onChange={e => setTemplate(e.target.value)}
+                className="w-24 text-xs border rounded px-2 py-1"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {['{row}{n}', '{row}-{n}', '{n}', '{cat}-{row}-{n}'].map(t => (
+                <button
+                  key={t}
+                  onClick={() => setTemplate(t)}
+                  className={`px-1.5 py-0.5 text-[10px] rounded border ${template === t ? 'bg-purple-100 border-purple-400 text-purple-700' : 'bg-white border-gray-300 text-gray-500'}`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            onClick={apply}
+            className="w-full px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+          >
+            Apply to {selectedCount} seat(s)
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 
 // Per-category status breakdown — collapsible section for the Plan view
 interface CatBreakdownData {
@@ -478,6 +660,29 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
             </div>
           );
         })()}
+        {selectedSeats.size > 1 && (
+          <div>
+            <label className={labelCls}>
+              <RotateCw className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
+              Rotate selection
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {[{label: '-90°', v: -90}, {label: '-45°', v: -45}, {label: '-15°', v: -15}, {label: '+15°', v: 15}, {label: '+45°', v: 45}, {label: '+90°', v: 90}].map(btn => (
+                <button
+                  key={btn.v}
+                  onClick={() => callbacks.selectionRotate(btn.v, true)}
+                  className="px-2 py-1 text-xs bg-gray-100 border rounded hover:bg-purple-50 hover:border-purple-300 transition-colors tabular-nums"
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center mt-1.5">
+              <NumberField label="Custom °" value={0} onCommit={(v) => callbacks.selectionRotate(v, true)} />
+            </div>
+          </div>
+        )}
+        <InlineNumbering selectedCount={selectedSeats.size} onApply={callbacks.applyInlineNumbering} />
         <p className="text-xs text-gray-500">Arrow keys nudge the selection (⇧ = ×10).</p>
         <DuplicateButton onClick={callbacks.duplicate} />
         <DeleteButton label={`Delete ${selectedSeats.size} seat(s)`} onClick={callbacks.deleteSelection} />

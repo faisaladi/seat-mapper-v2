@@ -4,7 +4,7 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Upload, ZoomIn, ZoomOut, Maximize, History, AlertTriangle } from 'lucide-react';
 import type { Position, Area, Seat, Row, Zone, Category, SeatData, Bounds, SelectedObject } from './model/types';
-import NumberingWizard, { NumberingResult } from './panels/numbering-wizard';
+import NumberingWizard, { NumberingResult, applyNumbering, type NumberingOptions } from './panels/numbering-wizard';
 import PropertiesPanel from './panels/properties-panel';
 import Toolbar, { SelectionMode, ShapeKind } from './panels/toolbar';
 import NewPlanModal from './panels/new-plan-modal';
@@ -19,6 +19,7 @@ import {
   offsetSeats,
   createBlankPlan,
   curveSeats,
+  rotateSeats,
   makeRectArea,
   makeEllipseArea,
   makeTextArea,
@@ -686,9 +687,14 @@ const SeatMapEditor: React.FC = () => {
           setDragOffset({ x: rowX - x, y: rowY - y });
         }
       } else {
+        // No seat under cursor: start a row-marquee drag
+        marqueeAdditiveRef.current = e.shiftKey;
+        setIsDragging(true);
+        setDragStart({ x, y });
+        setDragEnd({ x, y });
         setSelectedObject(null);
         setObjectProperties({});
-        setSelectedSeats(new Set());
+        if (!e.shiftKey) setSelectedSeats(new Set());
       }
     } else if (selectionMode === 'object') {
       // Find object under cursor
@@ -973,7 +979,11 @@ const SeatMapEditor: React.FC = () => {
     polyEditRef.current = null;
     setSnapGuides({ x: null, y: null });
     if (isDragging && dragStart && dragEnd) {
-      selectSeatsInArea();
+      if (selectionMode === 'row') {
+        selectRowsInArea();
+      } else {
+        selectSeatsInArea();
+      }
     }
     setIsDragging(false);
     setIsDraggingObject(false);
@@ -1008,6 +1018,38 @@ const SeatMapEditor: React.FC = () => {
     });
 
     marqueeAdditiveRef.current = false;
+    setSelectedSeats(newSelectedSeats);
+  };
+
+  // Select entire rows that have at least one seat inside the drag area
+  const selectRowsInArea = (): void => {
+    if (!seatData || !dragStart || !dragEnd) return;
+
+    const minX = Math.min(dragStart.x, dragEnd.x);
+    const maxX = Math.max(dragStart.x, dragEnd.x);
+    const minY = Math.min(dragStart.y, dragEnd.y);
+    const maxY = Math.max(dragStart.y, dragEnd.y);
+
+    const newSelectedSeats = marqueeAdditiveRef.current ? new Set(selectedSeats) : new Set<string>();
+
+    seatData.zones.forEach((zone: Zone) => {
+      zone.rows.forEach((row: Row) => {
+        // Check if any seat in this row is inside the marquee
+        const hasHit = row.seats.some((seat: Seat) => {
+          const seatX = seat.position.x + zone.position.x + row.position.x;
+          const seatY = seat.position.y + zone.position.y + row.position.y;
+          return seatX >= minX && seatX <= maxX && seatY >= minY && seatY <= maxY;
+        });
+        // If any seat hit, add ALL seats from this row
+        if (hasHit) {
+          row.seats.forEach((seat: Seat) => newSelectedSeats.add(seat.seat_guid));
+        }
+      });
+    });
+
+    marqueeAdditiveRef.current = false;
+    setSelectedObject(null);
+    setObjectProperties({});
     setSelectedSeats(newSelectedSeats);
   };
 
@@ -1984,6 +2026,27 @@ const SeatMapEditor: React.FC = () => {
     setSeatData(next);
   };
 
+  // Rotate an arbitrary seat selection around their centroid
+  const selectionRotate = (angleDeg: number, gesture: boolean): void => {
+    if (!seatData || selectedSeats.size < 2) return;
+    if (gesture) beginGesture();
+    const next = structuredClone(seatData);
+    rotateSeats(next, selectedSeats, angleDeg);
+    setSeatData(next);
+  };
+
+  // Apply inline numbering from the properties panel (operates on selected seats)
+  const applyInlineNumbering = (opts: NumberingOptions): void => {
+    if (!seatData || selectedSeats.size === 0) return;
+    beginGesture();
+    const result = applyNumbering(seatData, selectedSeats, { ...opts, scope: 'selected' });
+    setSeatData(result.next);
+    showToast(
+      `Numbered ${result.rowsChanged} row(s), ${result.seatsChanged} seat(s).${result.warning ? ` ${result.warning}` : ''}`,
+      result.warning ? 'info' : 'success'
+    );
+  };
+
   const selectedRowLayout = useMemo(() => {
     if (selectedObject?.type === 'row') return estimateRowLayout(selectedObject.data as Row);
     return null;
@@ -2402,6 +2465,9 @@ const SeatMapEditor: React.FC = () => {
               selectCategorySeats,
               selectionBendStart: beginGesture,
               selectionBendChange,
+              selectionRotateStart: beginGesture,
+              selectionRotate,
+              applyInlineNumbering,
               arrangeArea: arrangeSelectedArea,
               duplicate: duplicateSelection,
             }}

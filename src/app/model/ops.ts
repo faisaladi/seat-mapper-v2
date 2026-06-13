@@ -408,6 +408,52 @@ export const reorderArea = (data: SeatData, zoneIndex: number, areaIndex: number
   return target;
 };
 
+// Rotate an arbitrary selection of seats (by guid) around their centroid
+// by `angleDeg` degrees clockwise. Mutates seat positions in place on an
+// already-cloned SeatData, using the same absolute-coordinate approach as
+// curveSeats.
+export const rotateSeats = (data: SeatData, guids: Set<string>, angleDeg: number): void => {
+  interface AbsRef {
+    seat: Seat;
+    rowX: number; rowY: number;
+    zoneX: number; zoneY: number;
+    ax: number; ay: number;
+  }
+  const refs: AbsRef[] = [];
+  data.zones.forEach((zone: Zone) => {
+    const zoneX = zone.position?.x ?? 0;
+    const zoneY = zone.position?.y ?? 0;
+    zone.rows.forEach((row: Row) => {
+      const rowX = row.position?.x ?? 0;
+      const rowY = row.position?.y ?? 0;
+      row.seats.forEach((seat: Seat) => {
+        if (guids.has(seat.seat_guid)) {
+          refs.push({ seat, rowX, rowY, zoneX, zoneY,
+            ax: seat.position.x + rowX + zoneX,
+            ay: seat.position.y + rowY + zoneY });
+        }
+      });
+    });
+  });
+  if (refs.length < 2) return;
+
+  // Centroid
+  let cx = 0, cy = 0;
+  for (const r of refs) { cx += r.ax; cy += r.ay; }
+  cx /= refs.length; cy /= refs.length;
+
+  const rad = (angleDeg * Math.PI) / 180;
+  const cosA = Math.cos(rad), sinA = Math.sin(rad);
+
+  for (const r of refs) {
+    const dx = r.ax - cx, dy = r.ay - cy;
+    const nx = cx + dx * cosA - dy * sinA;
+    const ny = cy + dx * sinA + dy * cosA;
+    r.seat.position.x = nx - r.rowX - r.zoneX;
+    r.seat.position.y = ny - r.rowY - r.zoneY;
+  }
+};
+
 // A minimal valid plan for starting from scratch (single zone, TipTip-style)
 export const createBlankPlan = (name: string = 'Untitled Plan'): SeatData => ({
   name,
