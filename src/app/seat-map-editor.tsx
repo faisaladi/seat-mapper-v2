@@ -85,8 +85,9 @@ const SeatMapEditor: React.FC = () => {
   const polyEditRef = useRef<{ kind: 'anchor' | 'hIn' | 'hOut'; index: number } | null>(null);
   // Multi-select: drag-moving a whole seat selection, and additive marquee (shift)
   const groupDragRef = useRef<{ guid: string; offX: number; offY: number; curX: number; curY: number } | null>(null);
-  // On-canvas free rotation: dragging the rotation handle above the selection bbox
-  const rotateDragRef = useRef<{ cx: number; cy: number; lastAngle: number } | null>(null);
+  // On-canvas free rotation: dragging the rotation handle above the selection bbox.
+  // cumAngle tracks total rotation for shift-snapping; appliedAngle tracks what's been applied.
+  const rotateDragRef = useRef<{ cx: number; cy: number; startAngle: number; cumAngle: number; appliedAngle: number } | null>(null);
   const marqueeAdditiveRef = useRef<boolean>(false);
   // Grid + snapping. Snap targets (peer coords) are built once at gesture start;
   // active alignment guides are mirrored in state for rendering.
@@ -627,7 +628,7 @@ const SeatMapEditor: React.FC = () => {
           if (Math.hypot(x - handleX, y - handleY) <= hitR) {
             beginGesture();
             const angle = Math.atan2(y - bb.cy, x - bb.cx);
-            rotateDragRef.current = { cx: bb.cx, cy: bb.cy, lastAngle: angle };
+            rotateDragRef.current = { cx: bb.cx, cy: bb.cy, startAngle: angle, cumAngle: 0, appliedAngle: 0 };
             return;
           }
         }
@@ -878,17 +879,28 @@ const SeatMapEditor: React.FC = () => {
       return;
     }
 
-    // Free rotation: compute angle delta from the centroid to the mouse and
-    // rotate the selection by that delta.
+    // Free rotation: compute angle from the centroid to the mouse.
+    // Shift = snap to 15° increments from the gesture start.
     if (rotateDragRef.current) {
       const r = rotateDragRef.current;
       const angle = Math.atan2(y - r.cy, x - r.cx);
-      const delta = ((angle - r.lastAngle) * 180) / Math.PI;
-      if (Math.abs(delta) > 0.1) {
+      let rawDeg = ((angle - r.startAngle) * 180) / Math.PI;
+      // Normalize to [-180, 180]
+      while (rawDeg > 180) rawDeg -= 360;
+      while (rawDeg < -180) rawDeg += 360;
+
+      let targetAngle = rawDeg;
+      if (e.shiftKey) {
+        // Snap cumulative angle to 15° increments
+        targetAngle = Math.round(rawDeg / 15) * 15;
+      }
+
+      const delta = targetAngle - r.appliedAngle;
+      if (Math.abs(delta) > 0.05) {
         const next = structuredClone(seatData);
         rotateSeats(next, selectedSeats, delta);
         setSeatData(next);
-        r.lastAngle = angle;
+        r.appliedAngle = targetAngle;
       }
       return;
     }
