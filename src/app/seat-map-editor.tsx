@@ -1195,6 +1195,17 @@ const SeatMapEditor: React.FC = () => {
                 ctx.closePath();
                 ctx.stroke();
                 ctx.restore();
+            } else if (area.shape === 'text' && area.text) {
+                const size = area.text.size || 16;
+                const halfW = Math.max(16, (area.text.text?.length || 1) * size * 0.32);
+                const halfH = Math.max(10, size * 0.75);
+                ctx.save();
+                ctx.translate(x, y);
+                if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
+                ctx.setLineDash([5 / view.scale, 4 / view.scale]);
+                ctx.strokeRect(-halfW, -halfH, halfW * 2, halfH * 2);
+                ctx.setLineDash([]);
+                ctx.restore();
             }
 
             // Resize handles for parametric shapes (rect / circle / ellipse)

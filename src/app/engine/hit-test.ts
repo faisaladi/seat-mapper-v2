@@ -127,6 +127,28 @@ export const findObjectAtPosition = (
             });
           }
         }
+
+        // Standalone text: drawn centered on its position. Test a generous
+        // rotated box around the estimated text extent so it's easy to click.
+        if (area.shape === 'text' && area.text) {
+          const size = area.text.size || 16;
+          const halfW = Math.max(16, (area.text.text?.length || 1) * size * 0.32);
+          const halfH = Math.max(10, size * 0.75);
+          const rot = ((area.rotation || 0) * Math.PI) / 180;
+          const c = Math.cos(-rot), s = Math.sin(-rot);
+          const dx = x - areaX, dy = y - areaY;
+          const lx = dx * c - dy * s;
+          const ly = dx * s + dy * c;
+          if (lx >= -halfW && lx <= halfW && ly >= -halfH && ly <= halfH) {
+            matchingObjects.push({
+              type: 'area',
+              id: area.uuid || `area-${zoneIndex}-${areaIndex}`,
+              data: area,
+              zoneIndex,
+              areaIndex
+            });
+          }
+        }
       }
     }
   }
