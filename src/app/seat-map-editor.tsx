@@ -94,7 +94,7 @@ const SeatMapEditor: React.FC = () => {
   const rotateDragRef = useRef<{
     cx: number; cy: number; startAngle: number; cumAngle: number; appliedAngle: number;
     areaMode?: { zoneIndex: number; areaIndex: number; startRotation: number };
-    areaGroupMode?: { origins: Map<string, { x: number; y: number; rot: number }>; startBBox: { minX: number; minY: number; maxX: number; maxY: number } };
+    areaGroupMode?: { origins: Map<string, { x: number; y: number; rot: number }> };
   } | null>(null);
   const marqueeAdditiveRef = useRef<boolean>(false);
   // Grid + snapping. Snap targets (peer coords) are built once at gesture start;
@@ -773,7 +773,7 @@ const SeatMapEditor: React.FC = () => {
             });
             rotateDragRef.current = {
               cx: gcx, cy: gcy, startAngle: angle, cumAngle: 0, appliedAngle: 0,
-              areaGroupMode: { origins, startBBox: groupBB },
+              areaGroupMode: { origins },
             };
             return;
           }
@@ -1703,112 +1703,108 @@ const SeatMapEditor: React.FC = () => {
         }
     }
 
-    // Highlight multi-selected areas: only show the group bounding box (no per-shape outlines)
+    // Highlight multi-selected areas (shapes/text)
     if (selectedAreas.size > 0) {
-        // Use stored startBBox during active rotation, otherwise compute fresh
-        const activeRotation = rotateDragRef.current?.areaGroupMode;
-        const gbb = activeRotation?.startBBox ?? areaGroupBBox();
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 2.5 / view.scale;
+        ctx.setLineDash([6 / view.scale, 4 / view.scale]);
+        seatData.zones.forEach((zone: Zone) => {
+            (zone.areas || []).forEach((area: Area) => {
+                if (!area.uuid || !selectedAreas.has(area.uuid)) return;
+                const ax = area.position.x + zone.position.x;
+                const ay = area.position.y + zone.position.y;
 
-        // Single selected area: show individual yellow dashed outline
-        if (selectedAreas.size === 1) {
-            ctx.strokeStyle = '#fbbf24';
-            ctx.lineWidth = 2.5 / view.scale;
-            ctx.setLineDash([6 / view.scale, 4 / view.scale]);
-            seatData.zones.forEach((zone: Zone) => {
-                (zone.areas || []).forEach((area: Area) => {
-                    if (!area.uuid || !selectedAreas.has(area.uuid)) return;
-                    const ax = area.position.x + zone.position.x;
-                    const ay = area.position.y + zone.position.y;
-
-                    if (area.shape === 'rectangle' && area.rectangle) {
-                        const w = area.rectangle.width, h = area.rectangle.height;
-                        ctx.save();
-                        ctx.translate(ax + w / 2, ay + h / 2);
-                        if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
-                        ctx.strokeRect(-w / 2 - 3, -h / 2 - 3, w + 6, h + 6);
-                        ctx.restore();
-                    } else if (area.shape === 'circle' && area.circle?.radius) {
-                        ctx.beginPath();
-                        ctx.arc(ax, ay, area.circle.radius + 3, 0, 2 * Math.PI);
-                        ctx.stroke();
-                    } else if (area.shape === 'ellipse' && area.ellipse?.radius) {
-                        ctx.beginPath();
-                        ctx.ellipse(ax, ay, area.ellipse.radius.x + 3, area.ellipse.radius.y + 3, area.rotation ? (area.rotation * Math.PI) / 180 : 0, 0, 2 * Math.PI);
-                        ctx.stroke();
-                    } else if (area.shape === 'text' && area.text) {
-                        const size = area.text.size || 16;
-                        const halfW = Math.max(16, (area.text.text?.length || 1) * size * 0.32);
-                        const halfH = Math.max(10, size * 0.75);
-                        ctx.save();
-                        ctx.translate(ax, ay);
-                        if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
-                        ctx.strokeRect(-halfW - 3, -halfH - 3, (halfW + 3) * 2, (halfH + 3) * 2);
-                        ctx.restore();
-                    } else if (area.shape === 'polygon' && area.polygon?.points) {
-                        ctx.save();
-                        ctx.translate(ax, ay);
-                        if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
-                        const pts = area.polygon.points;
-                        ctx.beginPath();
-                        ctx.moveTo(pts[0].x, pts[0].y);
-                        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-                        ctx.closePath();
-                        ctx.stroke();
-                        ctx.restore();
-                    }
-                });
+                if (area.shape === 'rectangle' && area.rectangle) {
+                    const w = area.rectangle.width, h = area.rectangle.height;
+                    ctx.save();
+                    ctx.translate(ax + w / 2, ay + h / 2);
+                    if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
+                    ctx.strokeRect(-w / 2 - 3, -h / 2 - 3, w + 6, h + 6);
+                    ctx.restore();
+                } else if (area.shape === 'circle' && area.circle?.radius) {
+                    ctx.beginPath();
+                    ctx.arc(ax, ay, area.circle.radius + 3, 0, 2 * Math.PI);
+                    ctx.stroke();
+                } else if (area.shape === 'ellipse' && area.ellipse?.radius) {
+                    ctx.beginPath();
+                    ctx.ellipse(ax, ay, area.ellipse.radius.x + 3, area.ellipse.radius.y + 3, area.rotation ? (area.rotation * Math.PI) / 180 : 0, 0, 2 * Math.PI);
+                    ctx.stroke();
+                } else if (area.shape === 'text' && area.text) {
+                    const size = area.text.size || 16;
+                    const halfW = Math.max(16, (area.text.text?.length || 1) * size * 0.32);
+                    const halfH = Math.max(10, size * 0.75);
+                    ctx.save();
+                    ctx.translate(ax, ay);
+                    if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
+                    ctx.strokeRect(-halfW - 3, -halfH - 3, (halfW + 3) * 2, (halfH + 3) * 2);
+                    ctx.restore();
+                } else if (area.shape === 'polygon' && area.polygon?.points) {
+                    ctx.save();
+                    ctx.translate(ax, ay);
+                    if (area.rotation) ctx.rotate((area.rotation * Math.PI) / 180);
+                    const pts = area.polygon.points;
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0].x, pts[0].y);
+                    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+                    ctx.closePath();
+                    ctx.stroke();
+                    ctx.restore();
+                }
             });
-            ctx.setLineDash([]);
-        }
+        });
+        ctx.setLineDash([]);
 
-        // Group bounding box + rotation handle (2+ selected areas)
-        if (selectedAreas.size > 1 && gbb) {
-            const pad = 6 / view.scale;
-            // Bounding box
-            ctx.strokeStyle = '#7c3aed';
-            ctx.lineWidth = 1.5 / view.scale;
-            ctx.setLineDash([5 / view.scale, 3 / view.scale]);
-            ctx.strokeRect(gbb.minX - pad, gbb.minY - pad, gbb.maxX - gbb.minX + pad * 2, gbb.maxY - gbb.minY + pad * 2);
-            ctx.setLineDash([]);
+        // Group bounding box + rotation handle for multi-selected areas
+        if (selectedAreas.size > 1) {
+            const gbb = areaGroupBBox();
+            if (gbb) {
+                const pad = 6 / view.scale;
+                // Bounding box
+                ctx.strokeStyle = '#7c3aed';
+                ctx.lineWidth = 1.5 / view.scale;
+                ctx.setLineDash([5 / view.scale, 3 / view.scale]);
+                ctx.strokeRect(gbb.minX - pad, gbb.minY - pad, gbb.maxX - gbb.minX + pad * 2, gbb.maxY - gbb.minY + pad * 2);
+                ctx.setLineDash([]);
 
-            // Rotation handle
-            const handleDist = 30 / view.scale;
-            const handleX = (gbb.minX + gbb.maxX) / 2;
-            const handleY = gbb.minY - pad - handleDist;
-            const handleR = 5 / view.scale;
+                // Rotation handle
+                const handleDist = 30 / view.scale;
+                const handleX = (gbb.minX + gbb.maxX) / 2;
+                const handleY = gbb.minY - pad - handleDist;
+                const handleR = 5 / view.scale;
 
-            // Stem
-            ctx.strokeStyle = 'rgba(124, 58, 237, 0.5)';
-            ctx.lineWidth = 1.5 / view.scale;
-            ctx.beginPath();
-            ctx.moveTo(handleX, gbb.minY - pad);
-            ctx.lineTo(handleX, handleY);
-            ctx.stroke();
+                // Stem
+                ctx.strokeStyle = 'rgba(124, 58, 237, 0.5)';
+                ctx.lineWidth = 1.5 / view.scale;
+                ctx.beginPath();
+                ctx.moveTo(handleX, gbb.minY - pad);
+                ctx.lineTo(handleX, handleY);
+                ctx.stroke();
 
-            // Circle
-            ctx.fillStyle = '#ffffff';
-            ctx.strokeStyle = '#7c3aed';
-            ctx.lineWidth = 1.5 / view.scale;
-            ctx.beginPath();
-            ctx.arc(handleX, handleY, handleR, 0, 2 * Math.PI);
-            ctx.fill();
-            ctx.stroke();
+                // Circle
+                ctx.fillStyle = '#ffffff';
+                ctx.strokeStyle = '#7c3aed';
+                ctx.lineWidth = 1.5 / view.scale;
+                ctx.beginPath();
+                ctx.arc(handleX, handleY, handleR, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
 
-            // Rotation icon
-            ctx.strokeStyle = '#7c3aed';
-            ctx.lineWidth = 1 / view.scale;
-            ctx.beginPath();
-            ctx.arc(handleX, handleY, handleR * 0.55, -Math.PI * 0.7, Math.PI * 0.5);
-            ctx.stroke();
-            const tipX = handleX + handleR * 0.55 * Math.cos(Math.PI * 0.5);
-            const tipY = handleY + handleR * 0.55 * Math.sin(Math.PI * 0.5);
-            const arrowSize = 2.5 / view.scale;
-            ctx.beginPath();
-            ctx.moveTo(tipX, tipY);
-            ctx.lineTo(tipX - arrowSize, tipY - arrowSize);
-            ctx.moveTo(tipX, tipY);
-            ctx.lineTo(tipX + arrowSize, tipY - arrowSize);
-            ctx.stroke();
+                // Rotation icon
+                ctx.strokeStyle = '#7c3aed';
+                ctx.lineWidth = 1 / view.scale;
+                ctx.beginPath();
+                ctx.arc(handleX, handleY, handleR * 0.55, -Math.PI * 0.7, Math.PI * 0.5);
+                ctx.stroke();
+                const tipX = handleX + handleR * 0.55 * Math.cos(Math.PI * 0.5);
+                const tipY = handleY + handleR * 0.55 * Math.sin(Math.PI * 0.5);
+                const arrowSize = 2.5 / view.scale;
+                ctx.beginPath();
+                ctx.moveTo(tipX, tipY);
+                ctx.lineTo(tipX - arrowSize, tipY - arrowSize);
+                ctx.moveTo(tipX, tipY);
+                ctx.lineTo(tipX + arrowSize, tipY - arrowSize);
+                ctx.stroke();
+            }
         }
     }
 
