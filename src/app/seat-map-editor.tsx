@@ -85,6 +85,8 @@ const SeatMapEditor: React.FC = () => {
   const polyEditRef = useRef<{ kind: 'anchor' | 'hIn' | 'hOut'; index: number } | null>(null);
   // Multi-select: drag-moving a whole seat selection, and additive marquee (shift)
   const groupDragRef = useRef<{ guid: string; offX: number; offY: number; curX: number; curY: number } | null>(null);
+  // On-canvas free rotation: dragging the rotation handle above the selection bbox
+  const rotateDragRef = useRef<{ cx: number; cy: number; lastAngle: number } | null>(null);
   const marqueeAdditiveRef = useRef<boolean>(false);
   // Grid + snapping. Snap targets (peer coords) are built once at gesture start;
   // active alignment guides are mirrored in state for rendering.
@@ -348,6 +350,26 @@ const SeatMapEditor: React.FC = () => {
     return seatsInRow;
   };
 
+  // Bounding box + centroid of selected seats (used for rotation handle)
+  const selectionBBox = (): { minX: number; minY: number; maxX: number; maxY: number; cx: number; cy: number } | null => {
+    if (selectedSeats.size < 2) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let sumX = 0, sumY = 0, count = 0;
+    selectedSeats.forEach(guid => {
+      const p = contentMetrics.positions.get(guid);
+      if (p) {
+        const r = p.radius;
+        minX = Math.min(minX, p.x - r);
+        minY = Math.min(minY, p.y - r);
+        maxX = Math.max(maxX, p.x + r);
+        maxY = Math.max(maxY, p.y + r);
+        sumX += p.x; sumY += p.y; count++;
+      }
+    });
+    if (count < 2) return null;
+    return { minX, minY, maxX, maxY, cx: sumX / count, cy: sumY / count };
+  };
+
   // Build the set of peer coordinates to snap against (unique seat + shape
   // centers), excluding the objects currently being moved. Dedup to unique
   // rounded values so a grid collapses to ~rows+cols entries.
@@ -593,6 +615,22 @@ const SeatMapEditor: React.FC = () => {
         setSelectedObject(null);
         setObjectProperties({});
         return;
+      }
+      // Rotation handle: check before group-move so the handle takes priority
+      if (selectedSeats.size > 1) {
+        const bb = selectionBBox();
+        if (bb) {
+          const handleDist = 30 / viewRef.current.scale;
+          const handleX = (bb.minX + bb.maxX) / 2;
+          const handleY = bb.minY - handleDist;
+          const hitR = 8 / viewRef.current.scale;
+          if (Math.hypot(x - handleX, y - handleY) <= hitR) {
+            beginGesture();
+            const angle = Math.atan2(y - bb.cy, x - bb.cx);
+            rotateDragRef.current = { cx: bb.cx, cy: bb.cy, lastAngle: angle };
+            return;
+          }
+        }
       }
       // Group move: grab the selection (tests selected seats directly, so a
       // post-paste overlap doesn't break it; Move mode also grabs from gaps).
@@ -840,6 +878,21 @@ const SeatMapEditor: React.FC = () => {
       return;
     }
 
+    // Free rotation: compute angle delta from the centroid to the mouse and
+    // rotate the selection by that delta.
+    if (rotateDragRef.current) {
+      const r = rotateDragRef.current;
+      const angle = Math.atan2(y - r.cy, x - r.cx);
+      const delta = ((angle - r.lastAngle) * 180) / Math.PI;
+      if (Math.abs(delta) > 0.1) {
+        const next = structuredClone(seatData);
+        rotateSeats(next, selectedSeats, delta);
+        setSeatData(next);
+        r.lastAngle = angle;
+      }
+      return;
+    }
+
     // Hover feedback: resize cursor over a shape's handles; move cursor over a
     // multi-seat selection (so it's clear the group can be dragged).
     if (!isDragging && !isDraggingObject && !groupDragRef.current && !resizeRef.current) {
@@ -853,7 +906,18 @@ const SeatMapEditor: React.FC = () => {
           if (h) cur = handleCursor(h, box.rot);
         }
       }
-      if (!cur && selectedSeats.size > 1 && grabSelectedSeat(x, y)) cur = 'move';
+      if (!cur && selectedSeats.size > 1) {
+        // Rotation handle cursor
+        const bb = selectionBBox();
+        if (bb) {
+          const handleDist = 30 / viewRef.current.scale;
+          const handleX = (bb.minX + bb.maxX) / 2;
+          const handleY = bb.minY - handleDist;
+          const hitR = 8 / viewRef.current.scale;
+          if (Math.hypot(x - handleX, y - handleY) <= hitR) cur = 'grab';
+        }
+        if (!cur && grabSelectedSeat(x, y)) cur = 'move';
+      }
       if (cur !== hoverCursor) setHoverCursor(cur);
     }
 
@@ -976,6 +1040,7 @@ const SeatMapEditor: React.FC = () => {
     }
     resizeRef.current = null;
     groupDragRef.current = null;
+    rotateDragRef.current = null;
     polyEditRef.current = null;
     setSnapGuides({ x: null, y: null });
     if (isDragging && dragStart && dragEnd) {
@@ -1313,6 +1378,73 @@ const SeatMapEditor: React.FC = () => {
                 ctx.stroke();
             }
         });
+
+        // Rotation handle: bounding box + stem + handle circle
+        if (selectedSeats.size > 1) {
+            let sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity;
+            let sCount = 0;
+            selectedSeats.forEach(guid => {
+                const p = contentMetrics.positions.get(guid);
+                if (p) {
+                    const r = p.radius;
+                    sMinX = Math.min(sMinX, p.x - r);
+                    sMinY = Math.min(sMinY, p.y - r);
+                    sMaxX = Math.max(sMaxX, p.x + r);
+                    sMaxY = Math.max(sMaxY, p.y + r);
+                    sCount++;
+                }
+            });
+            if (sCount > 1) {
+                const pad = 6 / view.scale;
+                // Dashed bounding box
+                ctx.strokeStyle = 'rgba(124, 58, 237, 0.4)';
+                ctx.lineWidth = 1 / view.scale;
+                ctx.setLineDash([5 / view.scale, 4 / view.scale]);
+                ctx.strokeRect(sMinX - pad, sMinY - pad, sMaxX - sMinX + pad * 2, sMaxY - sMinY + pad * 2);
+                ctx.setLineDash([]);
+
+                // Rotation handle: stem + circle above center-top
+                const handleDist = 30 / view.scale;
+                const hx = (sMinX + sMaxX) / 2;
+                const hy = sMinY - pad;
+                const handleY = hy - handleDist;
+                const handleR = 5 / view.scale;
+
+                // Stem line
+                ctx.strokeStyle = 'rgba(124, 58, 237, 0.5)';
+                ctx.lineWidth = 1.5 / view.scale;
+                ctx.beginPath();
+                ctx.moveTo(hx, hy);
+                ctx.lineTo(hx, handleY);
+                ctx.stroke();
+
+                // Handle circle
+                ctx.fillStyle = '#ffffff';
+                ctx.strokeStyle = '#7c3aed';
+                ctx.lineWidth = 1.5 / view.scale;
+                ctx.beginPath();
+                ctx.arc(hx, handleY, handleR, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
+
+                // Rotation icon (circular arrow) inside the handle
+                ctx.strokeStyle = '#7c3aed';
+                ctx.lineWidth = 1 / view.scale;
+                ctx.beginPath();
+                ctx.arc(hx, handleY, handleR * 0.55, -Math.PI * 0.7, Math.PI * 0.5);
+                ctx.stroke();
+                // Arrow tip
+                const tipX = hx + handleR * 0.55 * Math.cos(Math.PI * 0.5);
+                const tipY = handleY + handleR * 0.55 * Math.sin(Math.PI * 0.5);
+                const arrowSize = 2.5 / view.scale;
+                ctx.beginPath();
+                ctx.moveTo(tipX, tipY);
+                ctx.lineTo(tipX - arrowSize, tipY - arrowSize);
+                ctx.moveTo(tipX, tipY);
+                ctx.lineTo(tipX + arrowSize, tipY - arrowSize);
+                ctx.stroke();
+            }
+        }
     }
 
     // Highlight single selected object seat
