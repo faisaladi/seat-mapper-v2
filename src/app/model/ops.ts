@@ -365,6 +365,32 @@ export const addArea = (data: SeatData, zoneIndex: number, area: Area): number =
   return zone.areas.length - 1;
 };
 
+// Bijective base-26 increment of a pure-alpha row label ("A"→"B", "Z"→"AA",
+// "AZ"→"BA"), preserving case. Returns '' for non-alpha labels (caller blanks).
+export const nextRowLabel = (label: string): string => {
+  if (!/^[A-Za-z]+$/.test(label)) return '';
+  const lower = label === label.toLowerCase();
+  const arr = label.toUpperCase().split('');
+  let i = arr.length - 1;
+  while (i >= 0) {
+    if (arr[i] === 'Z') { arr[i] = 'A'; i--; }
+    else { arr[i] = String.fromCharCode(arr[i].charCodeAt(0) + 1); break; }
+  }
+  if (i < 0) arr.unshift('A');
+  const r = arr.join('');
+  return lower ? r.toLowerCase() : r;
+};
+
+// Clone an area with a fresh uuid, offset by (dx,dy). Returns the new index.
+export const duplicateArea = (data: SeatData, zoneIndex: number, areaIndex: number, dx: number, dy: number): number => {
+  const src = data.zones[zoneIndex]?.areas?.[areaIndex];
+  if (!src) return areaIndex;
+  const copy: Area = structuredClone(src);
+  copy.uuid = crypto.randomUUID();
+  copy.position = { x: src.position.x + dx, y: src.position.y + dy };
+  return addArea(data, zoneIndex, copy);
+};
+
 // Reorder a shape within its zone's draw order. Areas paint in array order
 // (later = on top) and seats always paint after all areas, so this only
 // changes stacking relative to other shapes. Returns the area's new index.

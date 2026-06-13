@@ -1,6 +1,6 @@
 'use client';
 import React, { useRef, useState } from 'react';
-import { Trash2, Check, X, Edit2, Plus, BringToFront, SendToBack, ChevronUp, ChevronDown } from 'lucide-react';
+import { Trash2, Check, X, Edit2, Plus, BringToFront, SendToBack, ChevronUp, ChevronDown, Copy } from 'lucide-react';
 import type { SeatData, SelectedObject, Seat, Row, Area, Category, Zone } from '../model/types';
 import type { RowLayout } from '../model/ops';
 import { estimateSelectionSagitta } from '../model/ops';
@@ -30,6 +30,7 @@ export interface PanelCallbacks {
   selectionBendStart: () => void;
   selectionBendChange: (sagitta: number, gesture: boolean) => void;
   arrangeArea: (dir: 'front' | 'back' | 'forward' | 'backward') => void;
+  duplicate: () => void;
 }
 
 interface PropertiesPanelProps {
@@ -113,6 +114,17 @@ const ColorField: React.FC<{ label: string; value: string; onCommit: (v: string)
       <span className="text-xs font-mono text-gray-500">{value}</span>
     </div>
   </div>
+);
+
+const DuplicateButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+  <button
+    onClick={onClick}
+    title="Duplicate (⌘D)"
+    className="w-full flex items-center justify-center px-3 py-2 text-sm bg-gray-100 text-gray-700 border rounded-lg hover:bg-gray-200 transition-colors"
+  >
+    <Copy className="w-4 h-4 mr-2" />
+    Duplicate
+  </button>
 );
 
 const DeleteButton: React.FC<{ label: string; onClick: () => void }> = ({ label, onClick }) => (
@@ -302,6 +314,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
             ))}
           </div>
         </div>
+        <DuplicateButton onClick={callbacks.duplicate} />
         <DeleteButton label="Delete shape" onClick={callbacks.deleteSelection} />
       </div>
     );
@@ -372,6 +385,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
           );
         })()}
         <p className="text-xs text-gray-500">Arrow keys nudge the selection (⇧ = ×10).</p>
+        <DuplicateButton onClick={callbacks.duplicate} />
         <DeleteButton label={`Delete ${selectedSeats.size} seat(s)`} onClick={callbacks.deleteSelection} />
         <button
           onClick={callbacks.clearSelection}

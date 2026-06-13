@@ -25,6 +25,8 @@ import {
   makePolygonArea,
   addArea,
   reorderArea,
+  duplicateArea,
+  nextRowLabel,
   type ArrangeDir,
   InsertOptions,
 } from './model/ops';
@@ -1492,6 +1494,118 @@ const SeatMapEditor: React.FC = () => {
     setObjectProperties({});
   };
 
+  // ===== Copy / paste / duplicate (X6) =====
+  // Clipboard holds a deep copy of what was copied; paste mints fresh ids.
+  type Clip =
+    | { kind: 'seats'; seats: { seat: Seat; ax: number; ay: number }[] }
+    | { kind: 'area'; area: Area }
+    | { kind: 'row'; row: Row };
+  const clipboardRef = useRef<Clip | null>(null);
+  const PASTE_OFFSET = 24;
+
+  // Snapshot the current selection into the clipboard. Returns true if anything
+  // was captured.
+  const captureSelection = (): Clip | null => {
+    const data = seatDataRef.current;
+    if (!data) return null;
+    const sel = selectedObjectRef.current;
+    const seats = selectedSeatsRef.current;
+    if (seats.size > 0) {
+      const out: { seat: Seat; ax: number; ay: number }[] = [];
+      data.zones.forEach((zone: Zone) => zone.rows.forEach((row: Row) => row.seats.forEach((s: Seat) => {
+        if (seats.has(s.seat_guid)) {
+          out.push({ seat: structuredClone(s), ax: s.position.x + zone.position.x + row.position.x, ay: s.position.y + zone.position.y + row.position.y });
+        }
+      })));
+      return out.length ? { kind: 'seats', seats: out } : null;
+    }
+    if (sel?.type === 'area' && sel.areaIndex !== undefined) {
+      const area = data.zones[sel.zoneIndex].areas?.[sel.areaIndex];
+      return area ? { kind: 'area', area: structuredClone(area) } : null;
+    }
+    if (sel?.type === 'row' && sel.rowIndex !== undefined) {
+      return { kind: 'row', row: structuredClone(data.zones[sel.zoneIndex].rows[sel.rowIndex]) };
+    }
+    if (sel?.type === 'seat' && sel.rowIndex !== undefined && sel.seatIndex !== undefined) {
+      const zone = data.zones[sel.zoneIndex];
+      const row = zone.rows[sel.rowIndex];
+      const s = row.seats[sel.seatIndex];
+      return { kind: 'seats', seats: [{ seat: structuredClone(s), ax: s.position.x + zone.position.x + row.position.x, ay: s.position.y + zone.position.y + row.position.y }] };
+    }
+    return null;
+  };
+
+  const copySelection = useCallback((): void => {
+    const clip = captureSelection();
+    if (!clip) return;
+    clipboardRef.current = clip;
+    const n = clip.kind === 'seats' ? clip.seats.length : 1;
+    showToast(`Copied ${clip.kind === 'seats' ? `${n} seat(s)` : clip.kind}`);
+  }, [showToast]);
+
+  // Paste the clipboard (or a provided clip, for duplicate) at an offset, mint
+  // fresh ids, and select the new copies.
+  const pasteClip = useCallback((clip: Clip | null, offset: number): void => {
+    const data = seatDataRef.current;
+    if (!data || !clip) return;
+    beginGesture();
+    const next = structuredClone(data);
+    const zone = next.zones[0];
+
+    if (clip.kind === 'seats') {
+      // Group the pasted seats into one new row so they move as a block
+      const minAx = Math.min(...clip.seats.map(s => s.ax));
+      const minAy = Math.min(...clip.seats.map(s => s.ay));
+      const rowX = minAx + offset - zone.position.x;
+      const rowY = minAy + offset - zone.position.y;
+      const newGuids = new Set<string>();
+      const row: Row = { uuid: crypto.randomUUID(), position: { x: rowX, y: rowY }, row_number: '', seats: [] };
+      clip.seats.forEach(({ seat, ax, ay }) => {
+        const id = crypto.randomUUID();
+        newGuids.add(id);
+        row.seats.push({ ...structuredClone(seat), uuid: id, seat_guid: id, position: { x: ax - minAx, y: ay - minAy } });
+      });
+      zone.rows.push(row);
+      setSeatData(next);
+      setSelectedObject(null);
+      setObjectProperties({});
+      setSelectedSeats(newGuids);
+      showToast(`Pasted ${newGuids.size} seat(s)`);
+    } else if (clip.kind === 'area') {
+      const copy: Area = structuredClone(clip.area);
+      copy.uuid = crypto.randomUUID();
+      copy.position = { x: clip.area.position.x + offset, y: clip.area.position.y + offset };
+      const idx = addArea(next, 0, copy);
+      setSeatData(next);
+      setSelectedSeats(new Set());
+      setSelectionMode('object');
+      setSelectedObject({ type: 'area', id: copy.uuid!, data: copy, zoneIndex: 0, areaIndex: idx });
+      showToast(`Pasted ${copy.shape}`);
+    } else {
+      const row: Row = structuredClone(clip.row);
+      row.uuid = crypto.randomUUID();
+      row.position = { x: row.position.x + offset, y: row.position.y + offset };
+      row.row_number = row.row_number ? nextRowLabel(row.row_number) : '';
+      const guids = new Set<string>();
+      row.seats.forEach((s: Seat) => { const id = crypto.randomUUID(); s.uuid = id; s.seat_guid = id; guids.add(id); });
+      zone.rows.push(row);
+      const idx = zone.rows.length - 1;
+      setSeatData(next);
+      setSelectionMode('row');
+      setSelectedObject({ type: 'row', id: `row-0-${idx}`, data: row, zoneIndex: 0, rowIndex: idx });
+      setSelectedSeats(guids);
+      showToast(`Pasted row${row.row_number ? ` ${row.row_number}` : ''}`);
+    }
+  }, [beginGesture, showToast]);
+
+  const pasteClipboard = useCallback((): void => { pasteClip(clipboardRef.current, PASTE_OFFSET); }, [pasteClip]);
+  const duplicateSelection = useCallback((): void => {
+    const clip = captureSelection();
+    if (!clip) return;
+    clipboardRef.current = clip;
+    pasteClip(clip, PASTE_OFFSET);
+  }, [pasteClip]);
+
   // Arrange a selected shape in the draw order (seats always stay in front)
   const arrangeSelectedArea = (dir: ArrangeDir): void => {
     if (!seatData || selectedObject?.type !== 'area' || selectedObject.areaIndex === undefined) return;
@@ -1967,6 +2081,13 @@ const SeatMapEditor: React.FC = () => {
         else undo();
         return;
       }
+      // Copy / paste / duplicate
+      if (e.metaKey || e.ctrlKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'c') { e.preventDefault(); copySelection(); return; }
+        if (k === 'v') { e.preventDefault(); pasteClipboard(); return; }
+        if (k === 'd') { e.preventDefault(); duplicateSelection(); return; }
+      }
       // Pen tool: Enter finishes the polygon, Escape cancels it
       if (penActiveRef.current) {
         if (e.key === 'Enter') { e.preventDefault(); commitPen(); return; }
@@ -2019,7 +2140,7 @@ const SeatMapEditor: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [fitToContent, resetZoom, zoomAtCenter, undo, redo, deleteSelection, nudgeSelection]);
+  }, [fitToContent, resetZoom, zoomAtCenter, undo, redo, deleteSelection, nudgeSelection, copySelection, pasteClipboard, duplicateSelection]);
   
   // Export = download the JSON file directly (no preview modal)
   const handleJSONDownload = (): void => {
@@ -2207,6 +2328,7 @@ const SeatMapEditor: React.FC = () => {
               selectionBendStart: beginGesture,
               selectionBendChange,
               arrangeArea: arrangeSelectedArea,
+              duplicate: duplicateSelection,
             }}
           />
         )}
