@@ -1,19 +1,17 @@
 'use client';
 import React from 'react';
-import { Upload, Copy, MousePointer, Grid3X3, Rows, Undo2, Redo2, Wand2, Move, Armchair, FilePlus, Square, Circle, Type, Grid2x2, PenTool } from 'lucide-react';
+import { Upload, Copy, MousePointer, Grid3X3, Rows, Undo2, Redo2, Wand2, Armchair, FilePlus, Square, Circle, Type, Grid2x2, PenTool } from 'lucide-react';
 
-// Top toolbar: selection modes, move toggle, insert/shape/numbering tools,
+// Top toolbar: selection modes, insert/shape/numbering tools,
 // undo/redo, and the file actions (new / upload / export).
 
-export type SelectionMode = 'area' | 'row' | 'object';
+export type SelectionMode = 'area' | 'seats' | 'row';
 export type ShapeKind = 'rectangle' | 'ellipse' | 'text';
 
 interface ToolbarProps {
   hasData: boolean;
   selectionMode: SelectionMode;
   onSelectMode: (mode: SelectionMode) => void;
-  isMoveEnabled: boolean;
-  onToggleMove: () => void;
   onInsert: () => void;
   onShape: (shape: ShapeKind) => void;
   activeShape: ShapeKind | null;
@@ -42,8 +40,6 @@ const Toolbar: React.FC<ToolbarProps> = ({
   hasData,
   selectionMode,
   onSelectMode,
-  isMoveEnabled,
-  onToggleMove,
   onInsert,
   onShape,
   activeShape,
@@ -65,17 +61,14 @@ const Toolbar: React.FC<ToolbarProps> = ({
     {hasData && (
       <>
         <div className="w-px h-6 bg-gray-200 mx-1" />
-        <button onClick={() => onSelectMode('area')} className={toolCls(selectionMode === 'area')} title="Select seats by dragging (S)">
+        <button onClick={() => onSelectMode('area')} className={toolCls(selectionMode === 'area')} title="Select area — move seats, shapes & text (A)">
+          <MousePointer className="w-4 h-4" />
+        </button>
+        <button onClick={() => onSelectMode('seats')} className={toolCls(selectionMode === 'seats')} title="Select seats by dragging (S)">
           <Grid3X3 className="w-4 h-4" />
         </button>
         <button onClick={() => onSelectMode('row')} className={toolCls(selectionMode === 'row')} title="Select rows (R)">
           <Rows className="w-4 h-4" />
-        </button>
-        <button onClick={() => onSelectMode('object')} className={toolCls(selectionMode === 'object')} title="Select a seat or shape (A)">
-          <MousePointer className="w-4 h-4" />
-        </button>
-        <button onClick={onToggleMove} className={toolCls(isMoveEnabled, 'purple')} title="Move objects by dragging">
-          <Move className="w-4 h-4" />
         </button>
         <div className="w-px h-6 bg-gray-200 mx-1" />
         <button onClick={onInsert} className={toolCls(false)} title="Insert seat block">

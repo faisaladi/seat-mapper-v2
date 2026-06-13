@@ -65,7 +65,6 @@ const SeatMapEditor: React.FC = () => {
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('area');
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
   const [objectProperties, setObjectProperties] = useState<Record<string, string | number>>({});
-  const [isMoveEnabled, setIsMoveEnabled] = useState<boolean>(false);
   const [showInsertModal, setShowInsertModal] = useState<boolean>(false);
   const [isDraggingObject, setIsDraggingObject] = useState<boolean>(false);
   const [dragOffset, setDragOffset] = useState<Position | null>(null);
@@ -472,7 +471,7 @@ const SeatMapEditor: React.FC = () => {
       if (d < nearestD) { nearestD = d; nearest = guid; }
     });
     if (onSeat) return onSeat;
-    if (isMoveEnabled && x >= minX && x <= maxX && y >= minY && y <= maxY) return nearest;
+    if (x >= minX && x <= maxX && y >= minY && y <= maxY) return nearest;
     return null;
   };
 
@@ -526,7 +525,7 @@ const SeatMapEditor: React.FC = () => {
     penCursorRef.current = null;
     penDragRef.current = null;
     setPenActive(false);
-    setSelectionMode('object');
+    setSelectionMode('area');
     setSelectedObject({ type: 'area', id: area.uuid!, data: area, zoneIndex: 0, areaIndex: idx });
     setSelectedSeats(new Set());
     showToast(`Added polygon (${nodes.length} points)`);
@@ -612,7 +611,7 @@ const SeatMapEditor: React.FC = () => {
         const idx = addArea(next, 0, area);
         setSeatData(next);
         setPendingShape(null);
-        setSelectionMode('object');
+        setSelectionMode('area');
         setSelectedObject({ type: 'area', id: area.uuid!, data: area, zoneIndex: 0, areaIndex: idx });
         setSelectedSeats(new Set());
         showToast('Text added — edit it in the panel');
@@ -724,7 +723,7 @@ const SeatMapEditor: React.FC = () => {
 
     if (selectionMode === 'area') {
       // Check if we're clicking on a selected object first
-      if (selectedObject && isMoveEnabled) {
+      if (selectedObject) {
         // Get object position based on its type
         let objectX = 0;
         let objectY = 0;
@@ -761,8 +760,48 @@ const SeatMapEditor: React.FC = () => {
         }
       }
       
-      // If not dragging an object, start area selection. Shift = add to the
-      // existing selection instead of replacing it.
+      // If not clicking a selected object, try to select any object under cursor
+      const object = findObjectAtPosition(x, y);
+      if (object) {
+        setSelectedObject(object);
+        setObjectProperties(getObjectProperties(object));
+        setSelectedSeats(object.type === 'seat' ? new Set() : new Set());
+
+        // Set up for dragging
+        let objectX = 0;
+        let objectY = 0;
+
+        if (object.type === 'seat') {
+          const seat = object.data as Seat;
+          const row = seatData.zones[object.zoneIndex].rows[object.rowIndex!];
+          objectX = seat.position.x + row.position.x + seatData.zones[object.zoneIndex].position.x;
+          objectY = seat.position.y + row.position.y + seatData.zones[object.zoneIndex].position.y;
+        } else if (object.type === 'area') {
+          const area = object.data as Area;
+          objectX = area.position.x + seatData.zones[object.zoneIndex].position.x;
+          objectY = area.position.y + seatData.zones[object.zoneIndex].position.y;
+        }
+        beginGesture();
+        buildSnapTargets(
+          object.type === 'seat' ? new Set([object.id]) : new Set(),
+          object.type === 'area' ? { z: object.zoneIndex, i: object.areaIndex! } : undefined
+        );
+        setIsDraggingObject(true);
+        setDragOffset({ x: objectX - x, y: objectY - y });
+        return;
+      }
+
+      // If not clicking any object, start area selection (seats-only marquee).
+      // Shift = add to the existing selection instead of replacing it.
+      marqueeAdditiveRef.current = e.shiftKey;
+      setIsDragging(true);
+      setDragStart({ x, y });
+      setDragEnd({ x, y });
+      setSelectedObject(null);
+      if (!e.shiftKey) setSelectedSeats(new Set());
+    } else if (selectionMode === 'seats') {
+      // Seats-only marquee selection (no shape/text selection).
+      // Shift = add to the existing selection instead of replacing it.
       marqueeAdditiveRef.current = e.shiftKey;
       setIsDragging(true);
       setDragStart({ x, y });
@@ -789,15 +828,13 @@ const SeatMapEditor: React.FC = () => {
         setSelectedSeats(findSeatsInRow(object.zoneIndex, object.rowIndex));
         
         // Set up for dragging
-        if (isMoveEnabled) {
-          const row = seatData.zones[object.zoneIndex].rows[object.rowIndex];
-          const rowX = row.position.x + seatData.zones[object.zoneIndex].position.x;
-          const rowY = row.position.y + seatData.zones[object.zoneIndex].position.y;
-          beginGesture();
-          buildSnapTargets(new Set(row.seats.map((s: Seat) => s.seat_guid)));
-          setIsDraggingObject(true);
-          setDragOffset({ x: rowX - x, y: rowY - y });
-        }
+        const row = seatData.zones[object.zoneIndex].rows[object.rowIndex];
+        const rowX = row.position.x + seatData.zones[object.zoneIndex].position.x;
+        const rowY = row.position.y + seatData.zones[object.zoneIndex].position.y;
+        beginGesture();
+        buildSnapTargets(new Set(row.seats.map((s: Seat) => s.seat_guid)));
+        setIsDraggingObject(true);
+        setDragOffset({ x: rowX - x, y: rowY - y });
       } else {
         // No seat under cursor: start a row-marquee drag
         marqueeAdditiveRef.current = e.shiftKey;
@@ -807,42 +844,6 @@ const SeatMapEditor: React.FC = () => {
         setSelectedObject(null);
         setObjectProperties({});
         if (!e.shiftKey) setSelectedSeats(new Set());
-      }
-    } else if (selectionMode === 'object') {
-      // Find object under cursor
-      const object = findObjectAtPosition(x, y);
-      if (object) {
-        setSelectedObject(object);
-        setObjectProperties(getObjectProperties(object));
-        setSelectedSeats(new Set());
-        
-        // Set up for dragging
-        if (isMoveEnabled) {
-          let objectX = 0;
-          let objectY = 0;
-          
-          if (object.type === 'seat') {
-            const seat = object.data as Seat;
-            const row = seatData.zones[object.zoneIndex].rows[object.rowIndex!];
-            objectX = seat.position.x + row.position.x + seatData.zones[object.zoneIndex].position.x;
-            objectY = seat.position.y + row.position.y + seatData.zones[object.zoneIndex].position.y;
-          } else if (object.type === 'area') {
-            const area = object.data as Area;
-            objectX = area.position.x + seatData.zones[object.zoneIndex].position.x;
-            objectY = area.position.y + seatData.zones[object.zoneIndex].position.y;
-          }
-          beginGesture();
-          buildSnapTargets(
-            object.type === 'seat' ? new Set([object.id]) : new Set(),
-            object.type === 'area' ? { z: object.zoneIndex, i: object.areaIndex! } : undefined
-          );
-          setIsDraggingObject(true);
-          setDragOffset({ x: objectX - x, y: objectY - y });
-        }
-      } else {
-        setSelectedObject(null);
-        setObjectProperties({});
-        setSelectedSeats(new Set());
       }
     }
   };
@@ -1031,7 +1032,7 @@ const SeatMapEditor: React.FC = () => {
 
     if (isDragging) {
       setDragEnd({ x, y });
-    } else if (isDraggingObject && selectedObject && dragOffset && isMoveEnabled) {
+    } else if (isDraggingObject && selectedObject && dragOffset) {
       // Calculate new position, snapped to peers / grid
       const snapped = snapWorld(x + dragOffset.x, y + dragOffset.y);
       const newX = snapped.x;
@@ -1136,7 +1137,7 @@ const SeatMapEditor: React.FC = () => {
       shapeDraftRef.current = null;
       setShapeDraft(null);
       setPendingShape(null);
-      setSelectionMode('object');
+      setSelectionMode('area');
       setSelectedObject({ type: 'area', id: area.uuid!, data: area, zoneIndex: 0, areaIndex: idx });
       setSelectedSeats(new Set());
       showToast(`Added ${pendingShape}`);
@@ -1951,7 +1952,7 @@ const SeatMapEditor: React.FC = () => {
       const idx = addArea(next, 0, copy);
       setSeatData(next);
       setSelectedSeats(new Set());
-      setSelectionMode('object');
+      setSelectionMode('area');
       setSelectedObject({ type: 'area', id: copy.uuid!, data: copy, zoneIndex: 0, areaIndex: idx });
       showToast(`Pasted ${copy.shape}`);
     } else {
@@ -2490,12 +2491,12 @@ const SeatMapEditor: React.FC = () => {
       if (e.key === ' ') {
         e.preventDefault();
         setSpaceHeld(true);
-      } else if (e.key === 's') {
+      } else if (e.key === 'a') {
         toggleSelectionMode('area');
+      } else if (e.key === 's') {
+        toggleSelectionMode('seats');
       } else if (e.key === 'r') {
         toggleSelectionMode('row');
-      } else if (e.key === 'a') {
-        toggleSelectionMode('object');
       } else if (e.key === 'f') {
         fitToContent();
       } else if (e.key === '0') {
@@ -2600,8 +2601,6 @@ const SeatMapEditor: React.FC = () => {
         hasData={Boolean(seatData)}
         selectionMode={selectionMode}
         onSelectMode={toggleSelectionMode}
-        isMoveEnabled={isMoveEnabled}
-        onToggleMove={() => setIsMoveEnabled(prev => !prev)}
         onInsert={() => setShowInsertModal(true)}
         onShape={(shape) => { setPendingShape(prev => prev === shape ? null : shape); setPendingInsert(null); if (penActive) cancelPen(); }}
         activeShape={pendingShape}
@@ -2626,7 +2625,7 @@ const SeatMapEditor: React.FC = () => {
                 <canvas
                   ref={canvasRef}
                   className={`absolute inset-0 ${
-                    pendingInsert || pendingShape || penActive ? 'cursor-crosshair' : isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'area' ? 'cursor-crosshair' : 'cursor-pointer'
+                    pendingInsert || pendingShape || penActive ? 'cursor-crosshair' : isPanning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : selectionMode === 'seats' ? 'cursor-crosshair' : 'cursor-pointer'
                   }`}
                   style={hoverCursor ? { cursor: hoverCursor } : undefined}
                   onMouseDown={handleMouseDown}
@@ -2766,13 +2765,15 @@ const SeatMapEditor: React.FC = () => {
           {pendingInsert
             ? 'Click on the canvas to place the seat block · Esc to cancel'
             : selectionMode === 'area'
-            ? 'Drag to select seats · Shift-click adds/removes · Shift-drag extends · drag a selected seat to move the group'
+            ? 'Click to select seats & shapes · Drag to marquee-select seats · Shift-click to multi-select'
+            : selectionMode === 'seats'
+            ? 'Drag to select seats · Shift-click adds/removes · Shift-drag extends'
             : selectionMode === 'row'
-            ? 'Click a seat to select its row'
-            : 'Click a seat or shape to select it · Shift-click seats for multi-select'}
+            ? 'Click a seat to select its row · Drag to marquee-select rows'
+            : ''}
           {' · Scroll to pan · Pinch or ⌘/Ctrl + scroll to zoom · Space or middle-click + drag to pan'}
         </span>
-        <span className="hidden md:inline">S / R / A modes · F fit · 0 reset zoom · ⌘Z undo</span>
+        <span className="hidden md:inline">A / S / R modes · F fit · 0 reset zoom · ⌘Z undo</span>
       </div>
 
       {/* Modals */}
