@@ -79,8 +79,8 @@ const collectTargetRows = (data: SeatData, selected: Set<string>, scope: 'all' |
   return targets;
 };
 
-const renderTemplate = (template: string, rowName: string, n: string): string =>
-  template.replaceAll('{row}', rowName).replaceAll('{n}', n).replaceAll('%s', n);
+const renderTemplate = (template: string, rowName: string, n: string, catAlias: string = ''): string =>
+  template.replaceAll('{row}', rowName).replaceAll('{n}', n).replaceAll('{cat}', catAlias).replaceAll('%s', n);
 
 export interface NumberingResult {
   next: SeatData;
@@ -129,6 +129,9 @@ export function applyNumbering(data: SeatData, selected: Set<string>, opts: Numb
     let order = orderedSeatIndices(row);
     if (opts.seatReversed) order = [...order].reverse();
 
+    // Look up category alias for the {cat} token
+    const catLookup = new Map(next.categories.map(c => [c.name, c.label || '']));
+
     order.forEach(seatIdx => {
       const seat: Seat = row.seats[seatIdx];
       let nValue: string;
@@ -140,7 +143,8 @@ export function applyNumbering(data: SeatData, selected: Set<string>, opts: Numb
           : lettersFromIndex(counter - 1, opts.seatScheme === 'upper');
         counter++;
       }
-      const label = renderTemplate(opts.template, rowName, nValue);
+      const catAlias = catLookup.get(seat.category) || '';
+      const label = renderTemplate(opts.template, rowName, nValue, catAlias);
       seat.seat_number = opts.mode === 'tiptip' ? label : nValue;
       seatsChanged++;
     });
@@ -153,11 +157,14 @@ export function applyNumbering(data: SeatData, selected: Set<string>, opts: Numb
   return { next, rowsChanged: targets.length, seatsChanged, warning };
 }
 
-// Preview: first rows + last row with sample labels
+// Preview: first rows + last row with sample labels.
+// Always show rows in top-to-bottom physical order (ascending Y) so toggling
+// "Start from bottom row" visibly swaps which physical row gets which name.
 const buildPreview = (data: SeatData, selected: Set<string>, opts: NumberingOptions): { rows: { name: string; labels: string }[]; total: number } => {
   const { next } = applyNumbering(data, selected, opts);
   const targets = collectTargetRows(next, selected, opts.scope);
-  targets.sort((a, b) => (opts.rowOrderBottomUp ? b.sortY - a.sortY : a.sortY - b.sortY));
+  // Physical order: top of canvas first (ascending Y)
+  targets.sort((a, b) => a.sortY - b.sortY);
   const sample = targets.length <= 4 ? targets : [...targets.slice(0, 3), targets[targets.length - 1]];
   const rows = sample.map(t => {
     const order = orderedSeatIndices(t.row);
@@ -331,10 +338,10 @@ const NumberingWizard: React.FC<NumberingWizardProps> = ({ seatData, selectedSea
             <div className="font-semibold text-sm">Seat label</div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={labelCls}>Template — tokens: {'{row}'}, {'{n}'}</label>
+                <label className={labelCls}>Template — tokens: {'{row}'}, {'{n}'}, {'{cat}'}</label>
                 <input value={opts.template} onChange={e => set('template', e.target.value)} className={inputCls} />
-                <div className="flex space-x-1.5 mt-1.5">
-                  {['{row}{n}', '{row}-{n}', '{n}'].map(t => (
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {['{row}{n}', '{row}-{n}', '{n}', '{cat}-{row}-{n}'].map(t => (
                     <button
                       key={t}
                       onClick={() => set('template', t)}

@@ -1,6 +1,6 @@
 'use client';
-import React, { useRef, useState } from 'react';
-import { Trash2, Check, X, Edit2, Plus, BringToFront, SendToBack, ChevronUp, ChevronDown, Copy } from 'lucide-react';
+import React, { useRef, useState, useMemo } from 'react';
+import { Trash2, Check, X, Edit2, Plus, BringToFront, SendToBack, ChevronUp, ChevronDown, ChevronRight, Copy } from 'lucide-react';
 import type { SeatData, SelectedObject, Seat, Row, Area, Category, Zone } from '../model/types';
 import type { RowLayout } from '../model/ops';
 import { estimateSelectionSagitta } from '../model/ops';
@@ -140,6 +140,100 @@ const DeleteButton: React.FC<{ label: string; onClick: () => void }> = ({ label,
 const categoryOptions = (categories: Category[], extra?: { value: string; label: string }): { value: string; label: string }[] => {
   const opts = categories.map(c => ({ value: c.name, label: c.label || c.name.slice(0, 18) + '…' }));
   return extra ? [extra, ...opts] : opts;
+};
+
+// Per-category status breakdown — collapsible section for the Plan view
+interface CatBreakdownData {
+  label: string;
+  color: string;
+  available: number;
+  unavailable: number;
+  void: number;
+  sold: number;
+  total: number;
+}
+
+const CategoryBreakdown: React.FC<{ seatData: SeatData }> = ({ seatData }) => {
+  const [open, setOpen] = useState(false);
+  const [expandedCats, setExpandedCats] = useState<Set<number>>(new Set());
+
+  const breakdown = useMemo(() => {
+    const map = new Map<string, CatBreakdownData>();
+    seatData.categories.forEach(c => {
+      map.set(c.name, { label: c.label || c.name.slice(0, 18) + '…', color: c.color, available: 0, unavailable: 0, void: 0, sold: 0, total: 0 });
+    });
+    seatData.zones.forEach((z: Zone) => z.rows.forEach((r: Row) => r.seats.forEach((s: Seat) => {
+      let entry = map.get(s.category);
+      if (!entry) {
+        entry = { label: s.category.slice(0, 12), color: '#999', available: 0, unavailable: 0, void: 0, sold: 0, total: 0 };
+        map.set(s.category, entry);
+      }
+      const status = (s.status || 'available').toLowerCase();
+      if (status === 'available') entry.available++;
+      else if (status === 'unavailable') entry.unavailable++;
+      else if (status === 'void') entry.void++;
+      else if (status === 'sold') entry.sold++;
+      entry.total++;
+    })));
+    return Array.from(map.values());
+  }, [seatData]);
+
+  const toggleCat = (idx: number) => {
+    setExpandedCats(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  };
+
+  return (
+    <div className="space-y-2">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`${sectionCls} w-full flex items-center justify-between cursor-pointer hover:text-blue-600 transition-colors`}
+      >
+        <span>Category Breakdown</span>
+        <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && (
+        <div className="space-y-1">
+          {breakdown.map((cat, idx) => {
+            const isExpanded = expandedCats.has(idx);
+            return (
+              <div key={idx} className="border rounded-lg overflow-hidden">
+                <button
+                  onClick={() => toggleCat(idx)}
+                  className="w-full flex items-center px-2 py-1.5 text-sm hover:bg-gray-50 transition-colors"
+                >
+                  <span className="w-3 h-3 rounded-full flex-shrink-0 mr-2" style={{ backgroundColor: cat.color }} />
+                  <span className="flex-1 text-left font-medium text-gray-700 truncate">{cat.label}</span>
+                  <span className="font-semibold tabular-nums text-gray-800 mr-1.5">{cat.total}</span>
+                  <ChevronRight className={`w-3.5 h-3.5 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                </button>
+                {isExpanded && (
+                  <div className="px-2 pb-1.5 space-y-0.5 bg-gray-50 border-t">
+                    {STATUS_META.map(st => {
+                      const val = cat[st.key as keyof CatBreakdownData] as number;
+                      return (
+                        <div key={st.key} className="flex items-center text-xs text-gray-600 pl-5">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full border mr-1.5 flex-shrink-0"
+                            style={{ borderColor: st.outline, backgroundColor: '#e5e7eb' }}
+                          />
+                          <span className="flex-1">{st.label}</span>
+                          <span className="tabular-nums font-medium">{val}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 };
 
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObject, selectedSeats, rowLayout, categoryCounts, callbacks }) => {
@@ -435,6 +529,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
             <span className="font-semibold tabular-nums">{total}</span>
           </div>
         </div>
+
+        <CategoryBreakdown seatData={seatData} />
 
         <div className="space-y-2">
           <div className={sectionCls}>Categories</div>

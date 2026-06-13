@@ -2,7 +2,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 'use client';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Upload, ZoomIn, ZoomOut, Maximize, History } from 'lucide-react';
+import { Upload, ZoomIn, ZoomOut, Maximize, History, AlertTriangle } from 'lucide-react';
 import type { Position, Area, Seat, Row, Zone, Category, SeatData, Bounds, SelectedObject } from './model/types';
 import NumberingWizard, { NumberingResult } from './panels/numbering-wizard';
 import PropertiesPanel from './panels/properties-panel';
@@ -105,6 +105,9 @@ const SeatMapEditor: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showWizard, setShowWizard] = useState<boolean>(false);
+
+  // Export: duplicate seat number confirmation
+  const [showDuplicateModal, setShowDuplicateModal] = useState<{ duplicates: { catLabel: string; seatNumber: string; count: number }[] } | null>(null);
 
   // Toast notifications (replaces blocking alert())
   const [toast, setToast] = useState<Toast | null>(null);
@@ -2186,25 +2189,54 @@ const SeatMapEditor: React.FC = () => {
   }, [fitToContent, resetZoom, zoomAtCenter, undo, redo, deleteSelection, nudgeSelection, copySelection, pasteClipboard, duplicateSelection]);
   
   // Export = download the JSON file directly (no preview modal)
-  const handleJSONDownload = (): void => {
-    if (!seatData) return;
+  // Before downloading, check for duplicate seat numbers within the same category.
 
+  interface DuplicateEntry { catLabel: string; seatNumber: string; count: number }
+
+  const findDuplicateSeatNumbers = (data: SeatData): DuplicateEntry[] => {
+    const catLabels = new Map(data.categories.map(c => [c.name, c.label || c.name.slice(0, 18) + '…']));
+    // Group by (category, seat_number)
+    const groups = new Map<string, number>();
+    data.zones.forEach(z => z.rows.forEach(r => r.seats.forEach(s => {
+      const key = `${s.category}||${s.seat_number}`;
+      groups.set(key, (groups.get(key) || 0) + 1);
+    })));
+    const dupes: DuplicateEntry[] = [];
+    groups.forEach((count, key) => {
+      if (count > 1) {
+        const [cat, seatNum] = key.split('||');
+        dupes.push({ catLabel: catLabels.get(cat) || cat.slice(0, 12), seatNumber: seatNum, count });
+      }
+    });
+    return dupes;
+  };
+
+  const doDownload = (): void => {
+    if (!seatData) return;
     const jsonString = JSON.stringify(seatData, null, 2);
     const blob = new Blob([jsonString], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-
     const filename = `${seatData.name.replace(/\s+/g, '_').toLowerCase()}_seat_map.json`;
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
-
     setTimeout(() => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }, 100);
     showToast(`Downloaded ${filename}`);
+  };
+
+  const handleJSONDownload = (): void => {
+    if (!seatData) return;
+    const dupes = findDuplicateSeatNumbers(seatData);
+    if (dupes.length > 0) {
+      setShowDuplicateModal({ duplicates: dupes });
+      return;
+    }
+    doDownload();
   };
 
   return (
@@ -2432,6 +2464,60 @@ const SeatMapEditor: React.FC = () => {
             );
           }}
         />
+      )}
+
+      {/* Duplicate seat number confirmation modal */}
+      {showDuplicateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg w-full max-w-md shadow-xl">
+            <div className="flex items-center space-x-2 p-4 border-b bg-amber-50 rounded-t-lg">
+              <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+              <h3 className="text-base font-semibold text-amber-800">Duplicate Seat Numbers</h3>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-sm text-gray-700">
+                You have duplicate seat numbers within the same category:
+              </p>
+              <div className="max-h-48 overflow-y-auto border rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="text-left px-3 py-1.5 font-medium text-gray-600">Category</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-gray-600">Seat #</th>
+                      <th className="text-right px-3 py-1.5 font-medium text-gray-600">Count</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {showDuplicateModal.duplicates.map((d, i) => (
+                      <tr key={i} className="hover:bg-amber-50">
+                        <td className="px-3 py-1.5 text-gray-700">{d.catLabel}</td>
+                        <td className="px-3 py-1.5 font-mono text-gray-800">{d.seatNumber}</td>
+                        <td className="px-3 py-1.5 text-right font-medium text-amber-700">{d.count}×</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-gray-500">
+                {showDuplicateModal.duplicates.length} duplicate group(s) found. This may cause issues in TipTip.
+              </p>
+            </div>
+            <div className="flex items-center justify-end space-x-2 p-4 border-t bg-gray-50 rounded-b-lg">
+              <button
+                onClick={() => setShowDuplicateModal(null)}
+                className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowDuplicateModal(null); doDownload(); }}
+                className="px-4 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700"
+              >
+                Export Anyway
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Toast */}
