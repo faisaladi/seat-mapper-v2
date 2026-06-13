@@ -976,7 +976,7 @@ const SeatMapEditor: React.FC = () => {
           const am = r.areaMode;
           const area = next.zones[am.zoneIndex].areas?.[am.areaIndex];
           if (area) {
-            area.rotation = am.startRotation + targetAngle;
+            area.rotation = ((am.startRotation + targetAngle) % 360 + 360) % 360;
             // Update selectedObject so the sidebar Rotation field reflects live value
             setSelectedObject(prev => prev ? { ...prev, data: area } : prev);
           }
@@ -2249,7 +2249,7 @@ const SeatMapEditor: React.FC = () => {
       else if (prop === 'radius' && area.circle) area.circle.radius = num;
       else if (prop === 'radius_x' && area.ellipse?.radius) area.ellipse.radius.x = num;
       else if (prop === 'radius_y' && area.ellipse?.radius) area.ellipse.radius.y = num;
-      else if (prop === 'rotation') area.rotation = num;
+      else if (prop === 'rotation') area.rotation = ((num % 360) + 360) % 360;
       else if (prop === 'color') area.color = String(value);
       else if (prop === 'border_color') area.border_color = String(value);
       else if (prop === 'text' && area.text) area.text.text = String(value);
