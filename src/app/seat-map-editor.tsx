@@ -373,8 +373,10 @@ const SeatMapEditor: React.FC = () => {
   };
 
   // Compute rotation handle position for a selected area.
-  // Returns { hx, hy, cx, cy } where (hx,hy) is the handle center and (cx,cy) is the area center.
-  const areaRotationHandle = (area: Area | undefined, zone: Zone): { hx: number; hy: number; cx: number; cy: number } | null => {
+  // Returns { hx, hy, stemX, stemY, cx, cy } where (hx,hy) is the handle center,
+  // (stemX,stemY) is the rotated top-edge point (stem base), and (cx,cy) is the area center.
+  // The handle orbits with the shape's rotation so it stays visually above the rotated top edge.
+  const areaRotationHandle = (area: Area | undefined, zone: Zone): { hx: number; hy: number; stemX: number; stemY: number; cx: number; cy: number } | null => {
     if (!area) return null;
     const ax = area.position.x + zone.position.x;
     const ay = area.position.y + zone.position.y;
@@ -405,7 +407,24 @@ const SeatMapEditor: React.FC = () => {
     }
 
     const handleDist = 30 / viewRef.current.scale;
-    return { hx: cx, hy: topY - handleDist, cx, cy };
+    // Unrotated positions
+    let stemX = cx, stemY = topY;
+    let hx = cx, hy = topY - handleDist;
+
+    // Rotate both stem base and handle around the area center
+    const rot = area.rotation || 0;
+    if (rot !== 0) {
+      const rad = (rot * Math.PI) / 180;
+      const cosR = Math.cos(rad), sinR = Math.sin(rad);
+      const sdx = stemX - cx, sdy = stemY - cy;
+      stemX = cx + sdx * cosR - sdy * sinR;
+      stemY = cy + sdx * sinR + sdy * cosR;
+      const hdx = hx - cx, hdy = hy - cy;
+      hx = cx + hdx * cosR - hdy * sinR;
+      hy = cy + hdx * sinR + hdy * cosR;
+    }
+
+    return { hx, hy, stemX, stemY, cx, cy };
   };
 
   // Build the set of peer coordinates to snap against (unique seat + shape
@@ -958,6 +977,8 @@ const SeatMapEditor: React.FC = () => {
           const area = next.zones[am.zoneIndex].areas?.[am.areaIndex];
           if (area) {
             area.rotation = am.startRotation + targetAngle;
+            // Update selectedObject so the sidebar Rotation field reflects live value
+            setSelectedObject(prev => prev ? { ...prev, data: area } : prev);
           }
         } else {
           rotateSeats(next, selectedSeats, delta);
@@ -1461,11 +1482,11 @@ const SeatMapEditor: React.FC = () => {
             if (arh) {
                 const handleR = 5 / view.scale;
 
-                // Stem line
+                // Stem line from rotated top edge to handle
                 ctx.strokeStyle = 'rgba(124, 58, 237, 0.5)';
                 ctx.lineWidth = 1.5 / view.scale;
                 ctx.beginPath();
-                ctx.moveTo(arh.hx, arh.hy + 30 / view.scale);
+                ctx.moveTo(arh.stemX, arh.stemY);
                 ctx.lineTo(arh.hx, arh.hy);
                 ctx.stroke();
 
