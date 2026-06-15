@@ -39,6 +39,18 @@
   --color-line-strong: #b8b8d4;
 }
 
+/* Tailwind v4 defaults a bare `border`/`border-b`/`border-l` (no color) to
+   currentColor — which is the dark ink text here, so dividers render near-black.
+   Restore a sensible default: uncolored borders use the design line color.
+   Explicit border-<color> utilities still override this. */
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--color-line);
+  }
+}
+
 /* The editor UI is light-only (white cards, soft surfaces). Without this,
    OS dark mode flips text to near-white and it becomes invisible. */
 html {
