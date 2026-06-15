@@ -7,7 +7,6 @@ import type { Position, Area, Seat, Row, Zone, Category, SeatData, Bounds, Selec
 import NumberingWizard, { NumberingResult, applyNumbering, type NumberingOptions } from './panels/numbering-wizard';
 import PropertiesPanel from './panels/properties-panel';
 import Toolbar, { SelectionMode, ShapeKind } from './panels/toolbar';
-import NewPlanModal from './panels/new-plan-modal';
 import InsertModal from './panels/insert-modal';
 import {
   estimateRowLayout,
@@ -2730,38 +2729,19 @@ const SeatMapEditor: React.FC = () => {
 
   // New plan: modal with name + initial grid size (rows can be 0 for an empty
   // plan). Available from the landing screen AND the toolbar while editing.
-  const [showNewPlanModal, setShowNewPlanModal] = useState<boolean>(false);
-  const [newPlanForm, setNewPlanForm] = useState({ name: 'Untitled Plan', rows: 10, seatsPerRow: 12, spacing: 28, rowSpacing: 28, radius: 10 });
-
-  const createNewPlan = (): void => {
-    const data = createBlankPlan(newPlanForm.name.trim() || 'Untitled Plan');
-    let seatCount = 0;
-    if (newPlanForm.rows > 0 && newPlanForm.seatsPerRow > 0) {
-      const added = insertSeatBlock(data, 0, { x: 120, y: 120 }, {
-        rows: newPlanForm.rows,
-        seatsPerRow: newPlanForm.seatsPerRow,
-        spacing: newPlanForm.spacing,
-        rowSpacing: newPlanForm.rowSpacing,
-        radius: newPlanForm.radius,
-        category: data.categories[0]?.name || '',
-      });
-      seatCount = added.reduce((a, r) => a + r.seats.length, 0);
-    }
+  // New plan: instant blank 800×800 "Untitled Plan" — no modal. Add seats with
+  // the Insert tool. (Replaces the current plan; export first to keep it.)
+  const startBlankPlan = (): void => {
+    const data = createBlankPlan();
     resetHistory();
     needsFitRef.current = true;
     setSeatData(data);
     setSelectedSeats(new Set());
     setSelectedObject(null);
     setObjectProperties({});
-    setShowNewPlanModal(false);
-    showToast(
-      seatCount > 0
-        ? `Created "${data.name}" — ${newPlanForm.rows} rows, ${seatCount} seats. Run Numbering next.`
-        : `Created empty plan "${data.name}" — use Insert to add seats`,
-      'success'
-    );
+    showToast('New blank plan — use Insert to add seats');
   };
-  
+
   // Toggle selection mode
   const toggleSelectionMode = (mode: SelectionMode): void => {
     setSelectionMode(mode);
@@ -2924,7 +2904,7 @@ const SeatMapEditor: React.FC = () => {
         redo={redo}
         canUndo={canUndo}
         canRedo={canRedo}
-        onNewPlan={() => setShowNewPlanModal(true)}
+        onNewPlan={startBlankPlan}
         onUploadClick={() => fileInputRef.current?.click()}
         onExport={handleJSONDownload}
       />
@@ -3011,7 +2991,7 @@ const SeatMapEditor: React.FC = () => {
                     Upload JSON File
                   </button>
                   <button
-                    onClick={() => setShowNewPlanModal(true)}
+                    onClick={startBlankPlan}
                     className="px-6 py-3 bg-white text-ink border border-line rounded-lg hover:bg-soft transition-colors"
                   >
                     New Plan
@@ -3098,16 +3078,6 @@ const SeatMapEditor: React.FC = () => {
             setPendingInsert({ ...insertForm, kind: 'grid', category: '' });
             setShowInsertModal(false);
           }}
-        />
-      )}
-
-      {showNewPlanModal && (
-        <NewPlanModal
-          form={newPlanForm}
-          setForm={setNewPlanForm}
-          replacesCurrent={Boolean(seatData)}
-          onCancel={() => setShowNewPlanModal(false)}
-          onCreate={createNewPlan}
         />
       )}
 

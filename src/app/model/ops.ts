@@ -457,7 +457,7 @@ export const rotateSeats = (data: SeatData, guids: Set<string>, angleDeg: number
 // A minimal valid plan for starting from scratch (single zone, TipTip-style)
 export const createBlankPlan = (name: string = 'Untitled Plan'): SeatData => ({
   name,
-  size: { width: 1500, height: 1800 },
+  size: { width: 800, height: 800 },
   categories: [
     { name: crypto.randomUUID(), color: '#E61D54', label: 'CAT 1' },
     { name: crypto.randomUUID(), color: '#1D8EF6', label: 'CAT 2' },
