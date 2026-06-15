@@ -180,7 +180,9 @@ Hard rules (these key real bookings / break TipTip import if violated):
   - `ink` `#333`, `ink-soft` `#6A6A6A`, `ink-mute` `#8D8A9C` — text.
   - `page` `#F5F6FB` (app bg), `soft` `#EAEDF4`, `subtle` `#E5E6E9` — surfaces.
   - `line` `#DADBE0`, `line-strong` `#B8B8D4` — borders.
-  - Font: **Poppins** (`next/font`, `--font-poppins`, weights 400/500/600/700).
+  - UI font: **Open Sans** (`next/font`, `--font-open-sans`, weights 400/500/600/700).
+    Canvas text (seat numbers, row labels, area text) is drawn in **Arial** by
+    `engine/render.ts` and is intentionally NOT themed — leave it.
   - Kept off-palette on purpose: `red-*` (destructive/delete), `amber-*` (the
     duplicate-guid warning), and the green/red/black/gray **seat status outlines**
     + JSON **category colors** (functional data, not chrome). Snap guides are a

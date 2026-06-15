@@ -4,7 +4,7 @@
    Exposed as Tailwind v4 theme colors so utilities like bg-brand, text-ink,
    border-line, bg-page, accent-brand are generated. */
 @theme {
-  --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-open-sans), ui-sans-serif, system-ui, sans-serif;
 
   /* Primary (brand) — CTAs, active/selected states, highlights */
   --color-brand-50: #fbeff3;
