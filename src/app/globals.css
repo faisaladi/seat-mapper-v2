@@ -1,26 +1,52 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* SatuSatu design tokens — Color, Typography & CTAs guideline.
+   Exposed as Tailwind v4 theme colors so utilities like bg-brand, text-ink,
+   border-line, bg-page, accent-brand are generated. */
+@theme {
+  --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+
+  /* Primary (brand) — CTAs, active/selected states, highlights */
+  --color-brand-50: #fbeff3;
+  --color-brand-100: #f7dde5;
+  --color-brand-300: #e590a9;
+  --color-brand-400: #d4426c;
+  --color-brand: #cb1c4f;
+  --color-brand-600: #ac1c48;
+  --color-brand-700: #8d1c40;
+
+  /* Secondary (accent) — secondary CTAs, badges, tool accents */
+  --color-accent-50: #fff5ed;
+  --color-accent-100: #feead9;
+  --color-accent-300: #fcbb82;
+  --color-accent-400: #f98c2a;
+  --color-accent: #f87500;
+  --color-accent-600: #d26606;
+  --color-accent-700: #ab570c;
+
+  /* Text */
+  --color-ink: #333333;
+  --color-ink-soft: #6a6a6a;
+  --color-ink-mute: #8d8a9c;
+
+  /* Backgrounds */
+  --color-page: #f5f6fb;
+  --color-soft: #eaedf4;
+  --color-subtle: #e5e6e9;
+
+  /* Borders */
+  --color-line: #dadbe0;
+  --color-line-strong: #b8b8d4;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-/* The editor UI is light-only (white cards, gray surfaces). Without this,
-   OS dark mode flips --foreground to near-white and unstyled text becomes
-   invisible on the light surfaces. */
+/* The editor UI is light-only (white cards, soft surfaces). Without this,
+   OS dark mode flips text to near-white and it becomes invisible. */
 html {
   color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
 }

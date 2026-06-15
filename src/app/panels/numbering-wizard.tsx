@@ -183,8 +183,8 @@ interface NumberingWizardProps {
   onClose: () => void;
 }
 
-const inputCls = 'w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg bg-white';
-const labelCls = 'text-sm font-medium text-gray-700';
+const inputCls = 'w-full px-2 py-1.5 text-sm border border-line rounded-lg bg-white';
+const labelCls = 'text-sm font-medium text-ink';
 
 const NumberingWizard: React.FC<NumberingWizardProps> = ({ seatData, selectedSeats, onApply, onClose }) => {
   const hasSelection = useMemo(
@@ -209,12 +209,12 @@ const NumberingWizard: React.FC<NumberingWizardProps> = ({ seatData, selectedSea
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b bg-gray-50 rounded-t-lg">
+        <div className="flex items-center justify-between p-4 border-b bg-page rounded-t-lg">
           <div className="flex items-center space-x-2">
-            <Wand2 className="w-5 h-5 text-purple-600" />
+            <Wand2 className="w-5 h-5 text-accent" />
             <h3 className="text-lg font-semibold">Numbering &amp; Labels</h3>
           </div>
-          <button onClick={onClose} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded">
+          <button onClick={onClose} className="p-1.5 text-ink-soft hover:bg-subtle rounded">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -226,19 +226,19 @@ const NumberingWizard: React.FC<NumberingWizardProps> = ({ seatData, selectedSea
             <div className="flex space-x-2 mt-1.5">
               <button
                 onClick={() => set('scope', 'all')}
-                className={`px-3 py-1.5 text-sm rounded-lg border ${opts.scope === 'all' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                className={`px-3 py-1.5 text-sm rounded-lg border ${opts.scope === 'all' ? 'bg-brand text-white border-brand' : 'bg-white text-ink border-line'}`}
               >
                 All rows
               </button>
               <button
                 onClick={() => set('scope', 'selected')}
                 disabled={!hasSelection}
-                className={`px-3 py-1.5 text-sm rounded-lg border disabled:opacity-40 ${opts.scope === 'selected' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                className={`px-3 py-1.5 text-sm rounded-lg border disabled:opacity-40 ${opts.scope === 'selected' ? 'bg-brand text-white border-brand' : 'bg-white text-ink border-line'}`}
               >
                 Rows of selected seats
               </button>
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-ink-soft mt-1">
               Tip: for side blocks (e.g. left/right wings), select each block and run the wizard per block.
             </p>
           </div>
@@ -276,12 +276,12 @@ const NumberingWizard: React.FC<NumberingWizardProps> = ({ seatData, selectedSea
               </div>
             )}
             {opts.rowNameMode !== 'keep' && (
-              <label className="flex items-center space-x-2 text-sm text-gray-700">
+              <label className="flex items-center space-x-2 text-sm text-ink">
                 <input type="checkbox" checked={opts.rowOrderBottomUp} onChange={e => set('rowOrderBottomUp', e.target.checked)} />
                 <span>Start from the bottom row (stage side)</span>
               </label>
             )}
-            <div className="flex items-center space-x-4 text-sm text-gray-700">
+            <div className="flex items-center space-x-4 text-sm text-ink">
               <span className={labelCls}>Show row labels:</span>
               <label className="flex items-center space-x-1.5">
                 <input type="checkbox" checked={opts.showStart} onChange={e => set('showStart', e.target.checked)} />
@@ -320,7 +320,7 @@ const NumberingWizard: React.FC<NumberingWizardProps> = ({ seatData, selectedSea
               )}
             </div>
             {opts.seatScheme !== 'keep' && (
-              <div className="flex items-center space-x-5 text-sm text-gray-700">
+              <div className="flex items-center space-x-5 text-sm text-ink">
                 <label className="flex items-center space-x-1.5">
                   <input type="checkbox" checked={opts.seatReversed} onChange={e => set('seatReversed', e.target.checked)} />
                   <span>Reversed (right → left)</span>
@@ -345,7 +345,7 @@ const NumberingWizard: React.FC<NumberingWizardProps> = ({ seatData, selectedSea
                     <button
                       key={t}
                       onClick={() => set('template', t)}
-                      className={`px-2 py-0.5 text-xs rounded border ${opts.template === t ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-gray-50 border-gray-300 text-gray-600'}`}
+                      className={`px-2 py-0.5 text-xs rounded border ${opts.template === t ? 'bg-brand-50 border-brand text-brand' : 'bg-page border-line text-ink-soft'}`}
                     >
                       {t}
                     </button>
@@ -363,12 +363,12 @@ const NumberingWizard: React.FC<NumberingWizardProps> = ({ seatData, selectedSea
           </div>
 
           {/* Preview */}
-          <div className="border rounded-lg p-3 bg-gray-50">
+          <div className="border rounded-lg p-3 bg-page">
             <div className="font-semibold text-sm mb-2">
-              Preview <span className="font-normal text-gray-500">({preview.total} rows targeted)</span>
+              Preview <span className="font-normal text-ink-soft">({preview.total} rows targeted)</span>
             </div>
             {preview.rows.length === 0 ? (
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-ink-soft">
                 No rows targeted. The plan has no seats yet — close this wizard and use the Insert tool
                 (armchair icon in the toolbar) to add a seat grid first, then come back to number it.
               </p>
@@ -377,8 +377,8 @@ const NumberingWizard: React.FC<NumberingWizardProps> = ({ seatData, selectedSea
                 <tbody>
                   {preview.rows.map((r, i) => (
                     <tr key={i}>
-                      <td className="pr-3 py-0.5 font-mono font-semibold text-gray-700 whitespace-nowrap align-top">{r.name}</td>
-                      <td className="py-0.5 font-mono text-gray-600">{r.labels}</td>
+                      <td className="pr-3 py-0.5 font-mono font-semibold text-ink whitespace-nowrap align-top">{r.name}</td>
+                      <td className="py-0.5 font-mono text-ink-soft">{r.labels}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -387,14 +387,14 @@ const NumberingWizard: React.FC<NumberingWizardProps> = ({ seatData, selectedSea
           </div>
         </div>
 
-        <div className="flex items-center justify-end space-x-2 p-4 border-t bg-gray-50 rounded-b-lg">
-          <button onClick={onClose} className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+        <div className="flex items-center justify-end space-x-2 p-4 border-t bg-page rounded-b-lg">
+          <button onClick={onClose} className="px-4 py-2 text-sm bg-subtle text-ink rounded-lg hover:bg-subtle">
             Cancel
           </button>
           <button
             onClick={() => onApply(applyNumbering(seatData, selectedSeats, opts))}
             disabled={preview.total === 0}
-            className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-400"
+            className="px-4 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent-600 disabled:bg-subtle"
           >
             Apply to {preview.total} row(s)
           </button>

@@ -57,9 +57,9 @@ const STATUS_META: { key: string; label: string; outline: string }[] = [
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isValidUUID = (s: string): boolean => UUID_RE.test(s.trim());
 
-const fieldCls = 'w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg bg-white';
-const labelCls = 'block text-xs font-medium text-gray-500 mb-1';
-const sectionCls = 'text-sm font-semibold text-gray-800 pb-1.5 border-b';
+const fieldCls = 'w-full px-2 py-1.5 text-sm border border-line rounded-lg bg-white';
+const labelCls = 'block text-xs font-medium text-ink-soft mb-1';
+const sectionCls = 'text-sm font-semibold text-ink pb-1.5 border-b';
 
 const TextField: React.FC<{ label: string; value: string; onCommit: (v: string) => void; mono?: boolean }> = ({ label, value, onCommit, mono }) => (
   <div>
@@ -114,9 +114,9 @@ const ColorField: React.FC<{ label: string; value: string; onCommit: (v: string)
         type="color"
         defaultValue={/^#[0-9a-fA-F]{6}$/.test(value) ? value : '#cccccc'}
         onBlur={(e) => { if (e.target.value !== value) onCommit(e.target.value); }}
-        className="w-9 h-8 border border-gray-300 rounded cursor-pointer"
+        className="w-9 h-8 border border-line rounded cursor-pointer"
       />
-      <span className="text-xs font-mono text-gray-500">{value}</span>
+      <span className="text-xs font-mono text-ink-soft">{value}</span>
     </div>
   </div>
 );
@@ -125,7 +125,7 @@ const DuplicateButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
   <button
     onClick={onClick}
     title="Duplicate (⌘D)"
-    className="w-full flex items-center justify-center px-3 py-2 text-sm bg-gray-100 text-gray-700 border rounded-lg hover:bg-gray-200 transition-colors"
+    className="w-full flex items-center justify-center px-3 py-2 text-sm bg-soft text-ink border rounded-lg hover:bg-subtle transition-colors"
   >
     <Copy className="w-4 h-4 mr-2" />
     Duplicate
@@ -177,7 +177,7 @@ const InlineNumbering: React.FC<{ selectedCount: number; onApply: (opts: Numberi
   };
 
   const toggleCls = (on: boolean) =>
-    `relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${on ? 'bg-purple-600' : 'bg-gray-300'}`;
+    `relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${on ? 'bg-accent' : 'bg-subtle'}`;
   const dotCls = (on: boolean) =>
     `inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`;
 
@@ -185,16 +185,16 @@ const InlineNumbering: React.FC<{ selectedCount: number; onApply: (opts: Numberi
     <div className="space-y-2">
       <button
         onClick={() => setOpen(o => !o)}
-        className={`${sectionCls} w-full flex items-center justify-between cursor-pointer hover:text-blue-600 transition-colors`}
+        className={`${sectionCls} w-full flex items-center justify-between cursor-pointer hover:text-brand transition-colors`}
       >
         <span>Numbering</span>
-        <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+        <ChevronRight className={`w-4 h-4 text-ink-mute transition-transform ${open ? 'rotate-90' : ''}`} />
       </button>
       {open && (
-        <div className="space-y-3 border rounded-lg p-2.5 bg-gray-50">
+        <div className="space-y-3 border rounded-lg p-2.5 bg-page">
           {/* Row numbers */}
           <div className="space-y-1.5">
-            <div className="text-xs font-semibold text-gray-600">Row numbers</div>
+            <div className="text-xs font-semibold text-ink-soft">Row numbers</div>
             <div className="flex items-center justify-between">
               <span className={labelCls}>Numbering</span>
               <select
@@ -219,7 +219,7 @@ const InlineNumbering: React.FC<{ selectedCount: number; onApply: (opts: Numberi
                         return prev === 'A' ? 'A' : String.fromCharCode(prev.charCodeAt(0) - 1);
                       });
                     }}
-                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-gray-100"
+                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-soft"
                   >—</button>
                   <input
                     value={rowStart}
@@ -233,7 +233,7 @@ const InlineNumbering: React.FC<{ selectedCount: number; onApply: (opts: Numberi
                         return String.fromCharCode(Math.min(90, prev.charCodeAt(0) + 1));
                       });
                     }}
-                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-gray-100"
+                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-soft"
                   >+</button>
                 </div>
               </div>
@@ -248,7 +248,7 @@ const InlineNumbering: React.FC<{ selectedCount: number; onApply: (opts: Numberi
 
           {/* Seat numbers */}
           <div className="space-y-1.5 border-t pt-2">
-            <div className="text-xs font-semibold text-gray-600">Seat numbers</div>
+            <div className="text-xs font-semibold text-ink-soft">Seat numbers</div>
             <div className="flex items-center justify-between">
               <span className={labelCls}>Numbering</span>
               <select
@@ -266,7 +266,7 @@ const InlineNumbering: React.FC<{ selectedCount: number; onApply: (opts: Numberi
                 <div className="flex items-center space-x-1">
                   <button
                     onClick={() => setSeatStart(v => Math.max(0, v - 1))}
-                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-gray-100"
+                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-soft"
                   >—</button>
                   <input
                     type="number"
@@ -276,7 +276,7 @@ const InlineNumbering: React.FC<{ selectedCount: number; onApply: (opts: Numberi
                   />
                   <button
                     onClick={() => setSeatStart(v => v + 1)}
-                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-gray-100"
+                    className="px-1.5 py-0.5 text-xs bg-white border rounded hover:bg-soft"
                   >+</button>
                 </div>
               </div>
@@ -304,7 +304,7 @@ const InlineNumbering: React.FC<{ selectedCount: number; onApply: (opts: Numberi
                 <button
                   key={t}
                   onClick={() => setTemplate(t)}
-                  className={`px-1.5 py-0.5 text-[10px] rounded border ${template === t ? 'bg-purple-100 border-purple-400 text-purple-700' : 'bg-white border-gray-300 text-gray-500'}`}
+                  className={`px-1.5 py-0.5 text-[10px] rounded border ${template === t ? 'bg-accent-50 border-accent text-accent' : 'bg-white border-line text-ink-soft'}`}
                 >
                   {t}
                 </button>
@@ -314,7 +314,7 @@ const InlineNumbering: React.FC<{ selectedCount: number; onApply: (opts: Numberi
 
           <button
             onClick={apply}
-            className="w-full px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+            className="w-full px-3 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent-600 transition-colors"
           >
             Apply to {selectedCount} seat(s)
           </button>
@@ -373,10 +373,10 @@ const CategoryBreakdown: React.FC<{ seatData: SeatData }> = ({ seatData }) => {
     <div className="space-y-2">
       <button
         onClick={() => setOpen(o => !o)}
-        className={`${sectionCls} w-full flex items-center justify-between cursor-pointer hover:text-blue-600 transition-colors`}
+        className={`${sectionCls} w-full flex items-center justify-between cursor-pointer hover:text-brand transition-colors`}
       >
         <span>Category Breakdown</span>
-        <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+        <ChevronRight className={`w-4 h-4 text-ink-mute transition-transform ${open ? 'rotate-90' : ''}`} />
       </button>
       {open && (
         <div className="space-y-1">
@@ -386,19 +386,19 @@ const CategoryBreakdown: React.FC<{ seatData: SeatData }> = ({ seatData }) => {
               <div key={idx} className="border rounded-lg overflow-hidden">
                 <button
                   onClick={() => toggleCat(idx)}
-                  className="w-full flex items-center px-2 py-1.5 text-sm hover:bg-gray-50 transition-colors"
+                  className="w-full flex items-center px-2 py-1.5 text-sm hover:bg-page transition-colors"
                 >
                   <span className="w-3 h-3 rounded-full flex-shrink-0 mr-2" style={{ backgroundColor: cat.color }} />
-                  <span className="flex-1 text-left font-medium text-gray-700 truncate">{cat.label}</span>
-                  <span className="font-semibold tabular-nums text-gray-800 mr-1.5">{cat.total}</span>
-                  <ChevronRight className={`w-3.5 h-3.5 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                  <span className="flex-1 text-left font-medium text-ink truncate">{cat.label}</span>
+                  <span className="font-semibold tabular-nums text-ink mr-1.5">{cat.total}</span>
+                  <ChevronRight className={`w-3.5 h-3.5 text-ink-mute transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                 </button>
                 {isExpanded && (
-                  <div className="px-2 pb-1.5 space-y-0.5 bg-gray-50 border-t">
+                  <div className="px-2 pb-1.5 space-y-0.5 bg-page border-t">
                     {STATUS_META.map(st => {
                       const val = cat[st.key as keyof CatBreakdownData] as number;
                       return (
-                        <div key={st.key} className="flex items-center text-xs text-gray-600 pl-5">
+                        <div key={st.key} className="flex items-center text-xs text-ink-soft pl-5">
                           <span
                             className="w-2.5 h-2.5 rounded-full border mr-1.5 flex-shrink-0"
                             style={{ borderColor: st.outline, backgroundColor: '#e5e7eb' }}
@@ -479,13 +479,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
               callbacks.rowLayoutChange(dragSpacingRef.current, v, false);
             }}
             onPointerUp={() => setSliderValue(null)}
-            className="w-full accent-purple-600"
+            className="w-full accent-brand"
           />
           <div className="flex items-center justify-between">
             <NumberField label="" value={rowLayout.sagitta} onCommit={(v) => callbacks.rowLayoutChange(rowLayout.spacing, v, true)} />
             <button
               onClick={() => callbacks.rowLayoutChange(rowLayout.spacing, 0, true)}
-              className="ml-2 px-2 py-1.5 text-xs bg-gray-100 border rounded hover:bg-gray-200 whitespace-nowrap"
+              className="ml-2 px-2 py-1.5 text-xs bg-soft border rounded hover:bg-subtle whitespace-nowrap"
             >
               Straighten
             </button>
@@ -509,7 +509,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
         <TextField label="Seat number (label)" value={seat.seat_number} onCommit={(v) => callbacks.commitObjectProp('seat_number', v)} />
         <div>
           <label className={labelCls}>Seat ID</label>
-          <div className="text-xs font-mono text-gray-500 break-all">{seat.seat_guid}</div>
+          <div className="text-xs font-mono text-ink-soft break-all">{seat.seat_guid}</div>
         </div>
         <SelectField
           label="Status"
@@ -572,8 +572,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
           </>
         )}
         <div>
-          <label className={labelCls}>Arrange <span className="font-normal text-gray-400">(seats stay in front)</span></label>
-          <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden divide-x">
+          <label className={labelCls}>Arrange <span className="font-normal text-ink-mute">(seats stay in front)</span></label>
+          <div className="flex items-center border border-line rounded-lg overflow-hidden divide-x">
             {([
               ['back', SendToBack, 'Send to back'],
               ['backward', ChevronDown, 'Send backward'],
@@ -584,7 +584,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
                 key={dir}
                 onClick={() => callbacks.arrangeArea(dir)}
                 title={tip}
-                className="flex-1 flex items-center justify-center py-1.5 text-gray-600 hover:bg-gray-100"
+                className="flex-1 flex items-center justify-center py-1.5 text-ink-soft hover:bg-soft"
               >
                 <Icon className="w-4 h-4" />
               </button>
@@ -613,7 +613,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
           />
           <button
             onClick={() => callbacks.applyStatus(statusChoice)}
-            className="w-full px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            className="w-full px-3 py-2 text-sm bg-brand text-white rounded-lg hover:bg-brand-600 transition-colors"
           >
             Apply to {selectedSeats.size} seat(s)
           </button>
@@ -625,11 +625,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
               <button
                 key={i}
                 onClick={() => callbacks.assignCategory(i)}
-                className="w-full flex items-center space-x-2 px-2 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-purple-50 hover:border-purple-300 transition-colors"
+                className="w-full flex items-center space-x-2 px-2 py-1.5 text-sm border border-line rounded-lg hover:bg-accent-50 hover:border-accent transition-colors"
               >
                 <span className="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ backgroundColor: c.color }} />
                 <span className="flex-1 text-left truncate">{c.label || c.name.slice(0, 20) + '…'}</span>
-                <span className="text-xs text-gray-400">{categoryCounts.get(c.name) || 0}</span>
+                <span className="text-xs text-ink-mute">{categoryCounts.get(c.name) || 0}</span>
               </button>
             ))}
           </div>
@@ -652,13 +652,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
                   callbacks.selectionBendChange(v, false);
                 }}
                 onPointerUp={() => setSelSliderValue(null)}
-                className="w-full accent-purple-600"
+                className="w-full accent-brand"
               />
               <div className="flex items-center justify-between">
                 <NumberField label="" value={selSagitta} onCommit={(v) => callbacks.selectionBendChange(v, true)} />
                 <button
                   onClick={() => callbacks.selectionBendChange(0, true)}
-                  className="ml-2 px-2 py-1.5 text-xs bg-gray-100 border rounded hover:bg-gray-200 whitespace-nowrap"
+                  className="ml-2 px-2 py-1.5 text-xs bg-soft border rounded hover:bg-subtle whitespace-nowrap"
                 >
                   Straighten
                 </button>
@@ -673,16 +673,16 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
               Rotate selection
             </label>
             <NumberField label="Rotation °" value={0} onCommit={(v) => callbacks.selectionRotate(v, true)} />
-            <p className="text-xs text-gray-400 mt-0.5">Enter angle and press ↵. Hold ⇧ on handle for 15° snap.</p>
+            <p className="text-xs text-ink-mute mt-0.5">Enter angle and press ↵. Hold ⇧ on handle for 15° snap.</p>
           </div>
         )}
         <InlineNumbering selectedCount={selectedSeats.size} onApply={callbacks.applyInlineNumbering} />
-        <p className="text-xs text-gray-500">Arrow keys nudge the selection (⇧ = ×10).</p>
+        <p className="text-xs text-ink-soft">Arrow keys nudge the selection (⇧ = ×10).</p>
         <DuplicateButton onClick={callbacks.duplicate} />
         <DeleteButton label={`Delete ${selectedSeats.size} seat(s)`} onClick={callbacks.deleteSelection} />
         <button
           onClick={callbacks.clearSelection}
-          className="w-full px-3 py-2 text-sm bg-gray-100 text-gray-700 border rounded-lg hover:bg-gray-200 transition-colors"
+          className="w-full px-3 py-2 text-sm bg-soft text-ink border rounded-lg hover:bg-subtle transition-colors"
         >
           Clear selection
         </button>
@@ -703,7 +703,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
           <div className={sectionCls}>Plan</div>
           <TextField label="Name" value={seatData.name} onCommit={callbacks.commitPlanName} />
           <div>
-            <label className={labelCls}>Canvas size <span className="font-normal text-gray-400">(TipTip renders against this)</span></label>
+            <label className={labelCls}>Canvas size <span className="font-normal text-ink-mute">(TipTip renders against this)</span></label>
             <div className="grid grid-cols-2 gap-2">
               <NumberField label="" value={seatData.size?.width ?? 0} onCommit={(v) => callbacks.commitCanvasSize('width', v)} />
               <NumberField label="" value={seatData.size?.height ?? 0} onCommit={(v) => callbacks.commitCanvasSize('height', v)} />
@@ -719,7 +719,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
                 className="w-3.5 h-3.5 rounded-full border-2 mr-2 flex-shrink-0"
                 style={{ backgroundColor: '#e5e7eb', borderColor: s.outline }}
               />
-              <span className="flex-1 text-gray-600">{s.label}</span>
+              <span className="flex-1 text-ink-soft">{s.label}</span>
               <span className="font-medium tabular-nums">{stats[s.key]}</span>
             </div>
           ))}
@@ -733,7 +733,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
 
         <div className="space-y-2">
           <div className={sectionCls}>Categories</div>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-ink-soft">
             Display name is stored in the file and survives ticket-UUID changes. The UUID below it is what TipTip reads — swap it per show.
           </p>
           {seatData.categories.map((category: Category, idx: number) => {
@@ -748,7 +748,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
               <div key={idx} className="p-2 border rounded-lg space-y-1">
                 <div className="flex items-center space-x-2">
                   <label
-                    className="relative w-4 h-4 rounded-full flex-shrink-0 cursor-pointer ring-offset-1 hover:ring-2 hover:ring-gray-300"
+                    className="relative w-4 h-4 rounded-full flex-shrink-0 cursor-pointer ring-offset-1 hover:ring-2 hover:ring-line"
                     style={{ backgroundColor: category.color }}
                     title="Edit color"
                   >
@@ -767,18 +767,18 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
                     placeholder="Display name (e.g. VIP)…"
                     onBlur={(e) => callbacks.updateCategoryLabel(idx, e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                    className="flex-1 min-w-0 px-1.5 py-1 text-sm font-medium border border-transparent hover:border-gray-300 focus:border-blue-400 rounded outline-none"
+                    className="flex-1 min-w-0 px-1.5 py-1 text-sm font-medium border border-transparent hover:border-line focus:border-brand rounded outline-none"
                   />
                   <button
                     onClick={() => callbacks.selectCategorySeats(idx)}
-                    className="px-1.5 py-0.5 text-xs text-gray-500 hover:bg-blue-50 hover:text-blue-700 rounded whitespace-nowrap"
+                    className="px-1.5 py-0.5 text-xs text-ink-soft hover:bg-brand-50 hover:text-brand rounded whitespace-nowrap"
                     title="Select all seats in this category"
                   >
                     {categoryCounts.get(category.name) || 0} seats
                   </button>
                   <button
                     onClick={() => callbacks.deleteCategory(idx)}
-                    className="p-1 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded flex-shrink-0"
+                    className="p-1 text-ink-mute hover:text-red-600 hover:bg-red-50 rounded flex-shrink-0"
                     title="Delete category (must be empty)"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -791,7 +791,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
                         type="text"
                         value={editCatName}
                         onChange={(e) => setEditCatName(e.target.value.replace(/\s/g, ''))}
-                        className={`flex-1 min-w-0 px-1.5 py-1 text-xs font-mono border rounded ${valid ? 'border-gray-300' : 'border-red-400 bg-red-50'}`}
+                        className={`flex-1 min-w-0 px-1.5 py-1 text-xs font-mono border rounded ${valid ? 'border-line' : 'border-red-400 bg-red-50'}`}
                         autoFocus
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') commit();
@@ -801,7 +801,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
                       <button
                         onClick={commit}
                         disabled={!valid}
-                        className="p-1 text-green-600 hover:bg-green-100 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                        className="p-1 text-accent hover:bg-accent-50 rounded disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <Check className="w-3.5 h-3.5" />
                       </button>
@@ -815,12 +815,12 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
                   </div>
                 ) : (
                   <div className="flex items-center justify-between pl-6">
-                    <span className="text-xs font-mono text-gray-400 break-all" title="Ticket UUID (category name read by TipTip)">
+                    <span className="text-xs font-mono text-ink-mute break-all" title="Ticket UUID (category name read by TipTip)">
                       {category.name}
                     </span>
                     <button
                       onClick={() => { setEditingCat(idx); setEditCatName(category.name); }}
-                      className="p-1 text-blue-600 hover:bg-blue-100 rounded ml-1 flex-shrink-0"
+                      className="p-1 text-brand hover:bg-brand-50 rounded ml-1 flex-shrink-0"
                       title="Edit ticket UUID"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
@@ -832,14 +832,14 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ seatData, selectedObj
           })}
           <button
             onClick={callbacks.addCategory}
-            className="w-full flex items-center justify-center px-3 py-1.5 text-sm text-gray-600 border border-dashed border-gray-300 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-colors"
+            className="w-full flex items-center justify-center px-3 py-1.5 text-sm text-ink-soft border border-dashed border-line rounded-lg hover:bg-page hover:border-line transition-colors"
           >
             <Plus className="w-4 h-4 mr-1.5" />
             Add category
           </button>
         </div>
 
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-ink-soft">
           Select a seat, row or shape to edit it. Use the toolbar to insert seats or run numbering.
         </p>
       </div>

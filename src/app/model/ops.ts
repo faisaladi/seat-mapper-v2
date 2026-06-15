@@ -318,8 +318,8 @@ export const makeRectArea = (x: number, y: number, w: number, h: number): Area =
   uuid: crypto.randomUUID(),
   shape: 'rectangle',
   position: { x, y },
-  color: '#dbeafe',
-  border_color: '#3b82f6',
+  color: '#eaedf4',
+  border_color: '#b8b8d4',
   rectangle: { width: w, height: h },
 });
 
@@ -327,8 +327,8 @@ export const makeEllipseArea = (cx: number, cy: number, rx: number, ry: number):
   uuid: crypto.randomUUID(),
   shape: 'ellipse',
   position: { x: cx, y: cy },
-  color: '#fee2e2',
-  border_color: '#ef4444',
+  color: '#fff5ed',
+  border_color: '#f87500',
   ellipse: { radius: { x: rx, y: ry } },
   rotation: 0,
 });
@@ -337,9 +337,9 @@ export const makeTextArea = (x: number, y: number, text = 'Label'): Area => ({
   uuid: crypto.randomUUID(),
   shape: 'text',
   position: { x, y },
-  color: '#111827',
-  border_color: '#111827',
-  text: { text, color: '#111827', size: 24 },
+  color: '#333333',
+  border_color: '#333333',
+  text: { text, color: '#333333', size: 24 },
   rotation: 0,
 });
 
@@ -351,8 +351,8 @@ export const makePolygonArea = (
   uuid: crypto.randomUUID(),
   shape: 'polygon',
   position,
-  color: '#dcfce7',
-  border_color: '#16a34a',
+  color: '#fbeff3',
+  border_color: '#cb1c4f',
   polygon: nodes ? { points, nodes } : { points },
   rotation: 0,
 });

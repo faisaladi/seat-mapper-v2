@@ -32,8 +32,8 @@ interface ToolbarProps {
 const toolCls = (active: boolean, activeColor: 'blue' | 'purple' = 'blue'): string =>
   `w-9 h-9 flex items-center justify-center rounded-lg ${
     active
-      ? activeColor === 'purple' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
-      : 'text-gray-600 hover:bg-gray-100'
+      ? activeColor === 'purple' ? 'bg-accent-50 text-accent' : 'bg-brand-50 text-brand'
+      : 'text-ink-soft hover:bg-soft'
   }`;
 
 const Toolbar: React.FC<ToolbarProps> = ({
@@ -57,10 +57,10 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onExport,
 }) => (
   <div className="bg-white border-b px-3 py-1.5 flex items-center space-x-1 flex-shrink-0">
-    <h1 className="text-sm font-bold text-gray-800 pr-2 whitespace-nowrap">Seat Map Editor</h1>
+    <h1 className="text-sm font-bold text-ink pr-2 whitespace-nowrap">Seat Map Editor</h1>
     {hasData && (
       <>
-        <div className="w-px h-6 bg-gray-200 mx-1" />
+        <div className="w-px h-6 bg-subtle mx-1" />
         <button onClick={() => onSelectMode('area')} className={toolCls(selectionMode === 'area')} title="Select area — move seats, shapes & text (A)">
           <MousePointer className="w-4 h-4" />
         </button>
@@ -70,7 +70,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
         <button onClick={() => onSelectMode('row')} className={toolCls(selectionMode === 'row')} title="Select rows (R)">
           <Rows className="w-4 h-4" />
         </button>
-        <div className="w-px h-6 bg-gray-200 mx-1" />
+        <div className="w-px h-6 bg-subtle mx-1" />
         <button onClick={onInsert} className={toolCls(false)} title="Insert seat block">
           <Armchair className="w-4 h-4" />
         </button>
@@ -89,15 +89,15 @@ const Toolbar: React.FC<ToolbarProps> = ({
         <button onClick={onWizard} className={toolCls(false)} title="Numbering & labels">
           <Wand2 className="w-4 h-4" />
         </button>
-        <div className="w-px h-6 bg-gray-200 mx-1" />
+        <div className="w-px h-6 bg-subtle mx-1" />
         <button onClick={onToggleGrid} className={toolCls(showGrid)} title="Toggle grid + snap">
           <Grid2x2 className="w-4 h-4" />
         </button>
-        <div className="w-px h-6 bg-gray-200 mx-1" />
+        <div className="w-px h-6 bg-subtle mx-1" />
         <button
           onClick={undo}
           disabled={!canUndo}
-          className="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 disabled:opacity-30"
+          className="w-9 h-9 flex items-center justify-center rounded-lg text-ink-soft hover:bg-soft disabled:opacity-30"
           title="Undo (⌘Z)"
         >
           <Undo2 className="w-4 h-4" />
@@ -105,7 +105,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
         <button
           onClick={redo}
           disabled={!canRedo}
-          className="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 disabled:opacity-30"
+          className="w-9 h-9 flex items-center justify-center rounded-lg text-ink-soft hover:bg-soft disabled:opacity-30"
           title="Redo (⇧⌘Z)"
         >
           <Redo2 className="w-4 h-4" />
@@ -115,7 +115,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
     <div className="flex-1" />
     <button
       onClick={onNewPlan}
-      className="flex items-center px-3 py-1.5 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors mr-2"
+      className="flex items-center px-3 py-1.5 text-sm text-ink border border-line rounded-lg hover:bg-soft transition-colors mr-2"
       title="Start a new plan"
     >
       <FilePlus className="w-4 h-4 mr-1.5" />
@@ -123,7 +123,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
     </button>
     <button
       onClick={onUploadClick}
-      className="flex items-center px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+      className="flex items-center px-3 py-1.5 text-sm bg-brand text-white rounded-lg hover:bg-brand-600 transition-colors"
     >
       <Upload className="w-4 h-4 mr-1.5" />
       Upload JSON
@@ -131,7 +131,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
     {hasData && (
       <button
         onClick={onExport}
-        className="flex items-center px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors ml-2"
+        className="flex items-center px-3 py-1.5 text-sm bg-accent text-white rounded-lg hover:bg-accent-600 transition-colors ml-2"
       >
         <Copy className="w-4 h-4 mr-1.5" />
         Export JSON

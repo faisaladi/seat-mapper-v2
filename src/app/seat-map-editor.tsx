@@ -1520,7 +1520,7 @@ const SeatMapEditor: React.FC = () => {
     // read at their real TipTip coordinates against the gray backdrop.
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(c.x, c.y, c.w, c.h);
-    ctx.strokeStyle = '#cbd5e1';
+    ctx.strokeStyle = '#dadbe0';
     ctx.lineWidth = 1 / view.scale;
     ctx.strokeRect(c.x, c.y, c.w, c.h);
 
@@ -1567,7 +1567,7 @@ const SeatMapEditor: React.FC = () => {
             const x = area.position.x + zone.position.x;
             const y = area.position.y + zone.position.y;
 
-            ctx.strokeStyle = '#fbbf24';
+            ctx.strokeStyle = '#cb1c4f';
             ctx.lineWidth = 3 / view.scale;
 
             if (area.shape === 'rectangle' && area.rectangle) {
@@ -1617,7 +1617,7 @@ const SeatMapEditor: React.FC = () => {
                 if (box) {
                     const hs = 4 / view.scale; // half handle size, screen-constant
                     ctx.fillStyle = '#ffffff';
-                    ctx.strokeStyle = '#fbbf24';
+                    ctx.strokeStyle = '#cb1c4f';
                     ctx.lineWidth = 1.5 / view.scale;
                     for (const h of handleWorldPositions(box, isUniform(area))) {
                         ctx.fillRect(h.x - hs, h.y - hs, hs * 2, hs * 2);
@@ -1632,8 +1632,8 @@ const SeatMapEditor: React.FC = () => {
                 const oy = zone.position.y + area.position.y;
                 const s = view.scale;
                 const r = 4 / s;
-                ctx.strokeStyle = 'rgba(124,58,237,0.7)';
-                ctx.fillStyle = '#7c3aed';
+                ctx.strokeStyle = 'rgba(248, 117, 0,0.7)';
+                ctx.fillStyle = '#f87500';
                 ctx.lineWidth = 1 / s;
                 for (const n of area.polygon.nodes) {
                     for (const h of [n.hIn, n.hOut]) {
@@ -1648,7 +1648,7 @@ const SeatMapEditor: React.FC = () => {
                     }
                 }
                 ctx.fillStyle = '#ffffff';
-                ctx.strokeStyle = '#7c3aed';
+                ctx.strokeStyle = '#f87500';
                 ctx.lineWidth = 1.5 / s;
                 for (const n of area.polygon.nodes) {
                     ctx.fillRect(ox + n.x - r, oy + n.y - r, r * 2, r * 2);
@@ -1668,7 +1668,7 @@ const SeatMapEditor: React.FC = () => {
                 const handleR = 5 / view.scale;
 
                 // Stem line from rotated top edge to handle
-                ctx.strokeStyle = 'rgba(124, 58, 237, 0.5)';
+                ctx.strokeStyle = 'rgba(248, 117, 0, 0.5)';
                 ctx.lineWidth = 1.5 / view.scale;
                 ctx.beginPath();
                 ctx.moveTo(arh.stemX, arh.stemY);
@@ -1677,7 +1677,7 @@ const SeatMapEditor: React.FC = () => {
 
                 // Handle circle
                 ctx.fillStyle = '#ffffff';
-                ctx.strokeStyle = '#7c3aed';
+                ctx.strokeStyle = '#f87500';
                 ctx.lineWidth = 1.5 / view.scale;
                 ctx.beginPath();
                 ctx.arc(arh.hx, arh.hy, handleR, 0, 2 * Math.PI);
@@ -1685,7 +1685,7 @@ const SeatMapEditor: React.FC = () => {
                 ctx.stroke();
 
                 // Rotation icon inside
-                ctx.strokeStyle = '#7c3aed';
+                ctx.strokeStyle = '#f87500';
                 ctx.lineWidth = 1 / view.scale;
                 ctx.beginPath();
                 ctx.arc(arh.hx, arh.hy, handleR * 0.55, -Math.PI * 0.7, Math.PI * 0.5);
@@ -1705,7 +1705,7 @@ const SeatMapEditor: React.FC = () => {
 
     // Highlight multi-selected areas (shapes/text)
     if (selectedAreas.size > 0) {
-        ctx.strokeStyle = '#fbbf24';
+        ctx.strokeStyle = '#cb1c4f';
         ctx.lineWidth = 2.5 / view.scale;
         ctx.setLineDash([6 / view.scale, 4 / view.scale]);
         seatData.zones.forEach((zone: Zone) => {
@@ -1760,7 +1760,7 @@ const SeatMapEditor: React.FC = () => {
             if (gbb) {
                 const pad = 6 / view.scale;
                 // Bounding box
-                ctx.strokeStyle = '#7c3aed';
+                ctx.strokeStyle = '#f87500';
                 ctx.lineWidth = 1.5 / view.scale;
                 ctx.setLineDash([5 / view.scale, 3 / view.scale]);
                 ctx.strokeRect(gbb.minX - pad, gbb.minY - pad, gbb.maxX - gbb.minX + pad * 2, gbb.maxY - gbb.minY + pad * 2);
@@ -1773,7 +1773,7 @@ const SeatMapEditor: React.FC = () => {
                 const handleR = 5 / view.scale;
 
                 // Stem
-                ctx.strokeStyle = 'rgba(124, 58, 237, 0.5)';
+                ctx.strokeStyle = 'rgba(248, 117, 0, 0.5)';
                 ctx.lineWidth = 1.5 / view.scale;
                 ctx.beginPath();
                 ctx.moveTo(handleX, gbb.minY - pad);
@@ -1782,7 +1782,7 @@ const SeatMapEditor: React.FC = () => {
 
                 // Circle
                 ctx.fillStyle = '#ffffff';
-                ctx.strokeStyle = '#7c3aed';
+                ctx.strokeStyle = '#f87500';
                 ctx.lineWidth = 1.5 / view.scale;
                 ctx.beginPath();
                 ctx.arc(handleX, handleY, handleR, 0, 2 * Math.PI);
@@ -1790,7 +1790,7 @@ const SeatMapEditor: React.FC = () => {
                 ctx.stroke();
 
                 // Rotation icon
-                ctx.strokeStyle = '#7c3aed';
+                ctx.strokeStyle = '#f87500';
                 ctx.lineWidth = 1 / view.scale;
                 ctx.beginPath();
                 ctx.arc(handleX, handleY, handleR * 0.55, -Math.PI * 0.7, Math.PI * 0.5);
@@ -1810,7 +1810,7 @@ const SeatMapEditor: React.FC = () => {
 
     // Highlight selected seats
     if (selectedSeats.size > 0) {
-        ctx.strokeStyle = '#fbbf24';
+        ctx.strokeStyle = '#cb1c4f';
         ctx.lineWidth = 3 / view.scale;
 
         selectedSeats.forEach(seatGuid => {
@@ -1840,7 +1840,7 @@ const SeatMapEditor: React.FC = () => {
             if (sCount > 1) {
                 const pad = 6 / view.scale;
                 // Dashed bounding box
-                ctx.strokeStyle = 'rgba(124, 58, 237, 0.4)';
+                ctx.strokeStyle = 'rgba(248, 117, 0, 0.4)';
                 ctx.lineWidth = 1 / view.scale;
                 ctx.setLineDash([5 / view.scale, 4 / view.scale]);
                 ctx.strokeRect(sMinX - pad, sMinY - pad, sMaxX - sMinX + pad * 2, sMaxY - sMinY + pad * 2);
@@ -1854,7 +1854,7 @@ const SeatMapEditor: React.FC = () => {
                 const handleR = 5 / view.scale;
 
                 // Stem line
-                ctx.strokeStyle = 'rgba(124, 58, 237, 0.5)';
+                ctx.strokeStyle = 'rgba(248, 117, 0, 0.5)';
                 ctx.lineWidth = 1.5 / view.scale;
                 ctx.beginPath();
                 ctx.moveTo(hx, hy);
@@ -1863,7 +1863,7 @@ const SeatMapEditor: React.FC = () => {
 
                 // Handle circle
                 ctx.fillStyle = '#ffffff';
-                ctx.strokeStyle = '#7c3aed';
+                ctx.strokeStyle = '#f87500';
                 ctx.lineWidth = 1.5 / view.scale;
                 ctx.beginPath();
                 ctx.arc(hx, handleY, handleR, 0, 2 * Math.PI);
@@ -1871,7 +1871,7 @@ const SeatMapEditor: React.FC = () => {
                 ctx.stroke();
 
                 // Rotation icon (circular arrow) inside the handle
-                ctx.strokeStyle = '#7c3aed';
+                ctx.strokeStyle = '#f87500';
                 ctx.lineWidth = 1 / view.scale;
                 ctx.beginPath();
                 ctx.arc(hx, handleY, handleR * 0.55, -Math.PI * 0.7, Math.PI * 0.5);
@@ -1894,7 +1894,7 @@ const SeatMapEditor: React.FC = () => {
     if (selectedObject?.type === 'seat') {
         const pos = contentMetrics.positions.get(selectedObject.id);
         if (pos) {
-             ctx.strokeStyle = '#fbbf24';
+             ctx.strokeStyle = '#cb1c4f';
              ctx.lineWidth = 3 / view.scale;
              ctx.beginPath();
              ctx.arc(pos.x, pos.y, pos.radius + 3, 0, 2 * Math.PI);
@@ -1908,9 +1908,9 @@ const SeatMapEditor: React.FC = () => {
       const ry = Math.min(dragStart.y, dragEnd.y);
       const rw = Math.abs(dragEnd.x - dragStart.x);
       const rh = Math.abs(dragEnd.y - dragStart.y);
-      ctx.fillStyle = 'rgba(59, 130, 246, 0.08)';
+      ctx.fillStyle = 'rgba(203, 28, 79, 0.08)';
       ctx.fillRect(rx, ry, rw, rh);
-      ctx.strokeStyle = '#3b82f6';
+      ctx.strokeStyle = '#cb1c4f';
       ctx.lineWidth = 1.5 / view.scale;
       ctx.setLineDash([6 / view.scale, 4 / view.scale]);
       ctx.strokeRect(rx, ry, rw, rh);
@@ -1924,8 +1924,8 @@ const SeatMapEditor: React.FC = () => {
       const ry = Math.min(start.y, end.y);
       const rw = Math.abs(end.x - start.x);
       const rh = Math.abs(end.y - start.y);
-      ctx.fillStyle = 'rgba(139, 92, 246, 0.12)';
-      ctx.strokeStyle = '#8b5cf6';
+      ctx.fillStyle = 'rgba(248, 117, 0, 0.12)';
+      ctx.strokeStyle = '#f87500';
       ctx.lineWidth = 1.5 / view.scale;
       ctx.setLineDash([6 / view.scale, 4 / view.scale]);
       if (pendingShape === 'ellipse') {
@@ -1942,7 +1942,7 @@ const SeatMapEditor: React.FC = () => {
 
     // Alignment guides while snapping to a peer coordinate
     if (snapGuides.x !== null || snapGuides.y !== null) {
-      ctx.strokeStyle = '#ec4899';
+      ctx.strokeStyle = '#2563eb';
       ctx.lineWidth = 1 / view.scale;
       ctx.beginPath();
       if (snapGuides.x !== null) { ctx.moveTo(snapGuides.x, b.y); ctx.lineTo(snapGuides.x, b.y + b.h); }
@@ -1956,14 +1956,14 @@ const SeatMapEditor: React.FC = () => {
       const cursor = penCursorRef.current;
       const s = view.scale;
       const r = 4 / s;
-      ctx.strokeStyle = '#7c3aed';
+      ctx.strokeStyle = '#f87500';
       ctx.lineWidth = 2 / s;
       ctx.beginPath();
       tracePath(ctx, nodes, false);
       ctx.stroke();
       if (cursor) {
         const last = nodes[nodes.length - 1];
-        ctx.strokeStyle = 'rgba(124,58,237,0.5)';
+        ctx.strokeStyle = 'rgba(248, 117, 0,0.5)';
         ctx.setLineDash([5 / s, 4 / s]);
         ctx.beginPath();
         ctx.moveTo(last.x, last.y);
@@ -1971,8 +1971,8 @@ const SeatMapEditor: React.FC = () => {
         ctx.stroke();
         ctx.setLineDash([]);
       }
-      ctx.fillStyle = '#7c3aed';
-      ctx.strokeStyle = 'rgba(124,58,237,0.6)';
+      ctx.fillStyle = '#f87500';
+      ctx.strokeStyle = 'rgba(248, 117, 0,0.6)';
       ctx.lineWidth = 1 / s;
       for (const n of nodes) {
         for (const h of [n.hIn, n.hOut]) {
@@ -1988,7 +1988,7 @@ const SeatMapEditor: React.FC = () => {
       }
       nodes.forEach((n, i) => {
         ctx.fillStyle = '#ffffff';
-        ctx.strokeStyle = '#7c3aed';
+        ctx.strokeStyle = '#f87500';
         ctx.lineWidth = 1.5 / s;
         ctx.fillRect(n.x - r, n.y - r, r * 2, r * 2);
         ctx.strokeRect(n.x - r, n.y - r, r * 2, r * 2);
@@ -2900,7 +2900,7 @@ const SeatMapEditor: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-screen bg-gray-50 flex flex-col">
+    <div className="w-full h-screen bg-page flex flex-col">
       <input
         type="file"
         accept=".json"
@@ -2932,7 +2932,7 @@ const SeatMapEditor: React.FC = () => {
         {/* Canvas Area */}
         <div className="flex-1 p-4 flex flex-col min-h-0 min-w-0 overflow-hidden">
           {seatData ? (
-            <div ref={containerRef} className="relative flex-1 min-h-0 overflow-hidden bg-gray-100">
+            <div ref={containerRef} className="relative flex-1 min-h-0 overflow-hidden bg-soft">
                 <canvas
                   ref={canvasRef}
                   className={`absolute inset-0 ${
@@ -2946,17 +2946,17 @@ const SeatMapEditor: React.FC = () => {
                   onDoubleClick={() => { if (penActive) commitPen(); }}
                 />
                 {pendingInsert && (
-                  <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-accent text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
                     Click on the canvas to place · Esc to cancel
                   </div>
                 )}
                 {pendingShape && (
-                  <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-accent text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
                     {pendingShape === 'text' ? 'Click to place text' : `Drag to draw a ${pendingShape}`} · Esc to cancel
                   </div>
                 )}
                 {penActive && (
-                  <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-accent text-white text-xs font-medium rounded-full shadow-md pointer-events-none">
                     Click for corners · drag for curves · click the first point / double-click / Enter to finish · Esc cancels
                   </div>
                 )}
@@ -2964,29 +2964,29 @@ const SeatMapEditor: React.FC = () => {
                 <div className="absolute bottom-4 right-4 flex items-center bg-white border shadow-md rounded-lg overflow-hidden">
                   <button
                     onClick={() => zoomAtCenter(0.8)}
-                    className="w-9 h-9 flex items-center justify-center hover:bg-gray-100"
+                    className="w-9 h-9 flex items-center justify-center hover:bg-soft"
                     title="Zoom out (-)"
                   >
                     <ZoomOut className="w-4 h-4" />
                   </button>
                   <button
                     onClick={resetZoom}
-                    className="w-14 h-9 text-xs font-medium hover:bg-gray-100 tabular-nums"
+                    className="w-14 h-9 text-xs font-medium hover:bg-soft tabular-nums"
                     title="Reset to 100% (0)"
                   >
                     {zoomPct}%
                   </button>
                   <button
                     onClick={() => zoomAtCenter(1.25)}
-                    className="w-9 h-9 flex items-center justify-center hover:bg-gray-100"
+                    className="w-9 h-9 flex items-center justify-center hover:bg-soft"
                     title="Zoom in (+)"
                   >
                     <ZoomIn className="w-4 h-4" />
                   </button>
-                  <div className="w-px h-5 bg-gray-200" />
+                  <div className="w-px h-5 bg-subtle" />
                   <button
                     onClick={fitToContent}
-                    className="w-9 h-9 flex items-center justify-center hover:bg-gray-100"
+                    className="w-9 h-9 flex items-center justify-center hover:bg-soft"
                     title="Fit to content (F)"
                   >
                     <Maximize className="w-4 h-4" />
@@ -2996,23 +2996,23 @@ const SeatMapEditor: React.FC = () => {
           ) : (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
-                <Upload className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-600 mb-2">
+                <Upload className="w-16 h-16 text-ink-mute mx-auto mb-4" />
+                <h3 className="text-xl font-semibold text-ink-soft mb-2">
                   No Seat Map Loaded
                 </h3>
-                <p className="text-gray-500 mb-4">
+                <p className="text-ink-soft mb-4">
                   Upload a JSON file to start editing seat statuses
                 </p>
                 <div className="flex items-center justify-center space-x-3">
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    className="px-6 py-3 bg-brand text-white rounded-lg hover:bg-brand-600 transition-colors"
                   >
                     Upload JSON File
                   </button>
                   <button
                     onClick={() => setShowNewPlanModal(true)}
-                    className="px-6 py-3 bg-white text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
+                    className="px-6 py-3 bg-white text-ink border border-line rounded-lg hover:bg-soft transition-colors"
                   >
                     New Plan
                   </button>
@@ -3020,13 +3020,13 @@ const SeatMapEditor: React.FC = () => {
                 {autosaveMeta && (
                   <button
                     onClick={restoreAutosave}
-                    className="mt-4 inline-flex items-center text-sm text-blue-600 hover:underline"
+                    className="mt-4 inline-flex items-center text-sm text-brand hover:underline"
                   >
                     <History className="w-4 h-4 mr-1.5" />
                     Restore last session — “{autosaveMeta.name}” ({new Date(autosaveMeta.savedAt).toLocaleString()})
                   </button>
                 )}
-                <p className="mt-3 text-xs text-gray-400">…or drag &amp; drop a .json file anywhere</p>
+                <p className="mt-3 text-xs text-ink-mute">…or drag &amp; drop a .json file anywhere</p>
               </div>
             </div>
           )}
@@ -3072,7 +3072,7 @@ const SeatMapEditor: React.FC = () => {
       </div>
 
       {/* Status bar */}
-      <div className="bg-white border-t px-3 py-1 text-xs text-gray-500 flex items-center justify-between flex-shrink-0">
+      <div className="bg-white border-t px-3 py-1 text-xs text-ink-soft flex items-center justify-between flex-shrink-0">
         <span>
           {pendingInsert
             ? 'Click on the canvas to place the seat block · Esc to cancel'
@@ -3139,37 +3139,37 @@ const SeatMapEditor: React.FC = () => {
               <h3 className="text-base font-semibold text-amber-800">Duplicate Seat Numbers</h3>
             </div>
             <div className="p-4 space-y-3">
-              <p className="text-sm text-gray-700">
+              <p className="text-sm text-ink">
                 You have duplicate seat numbers within the same category:
               </p>
               <div className="max-h-48 overflow-y-auto border rounded-lg">
                 <table className="w-full text-sm">
-                  <thead className="bg-gray-50 sticky top-0">
+                  <thead className="bg-page sticky top-0">
                     <tr>
-                      <th className="text-left px-3 py-1.5 font-medium text-gray-600">Category</th>
-                      <th className="text-left px-3 py-1.5 font-medium text-gray-600">Seat #</th>
-                      <th className="text-right px-3 py-1.5 font-medium text-gray-600">Count</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-ink-soft">Category</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-ink-soft">Seat #</th>
+                      <th className="text-right px-3 py-1.5 font-medium text-ink-soft">Count</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {showDuplicateModal.duplicates.map((d, i) => (
                       <tr key={i} className="hover:bg-amber-50">
-                        <td className="px-3 py-1.5 text-gray-700">{d.catLabel}</td>
-                        <td className="px-3 py-1.5 font-mono text-gray-800">{d.seatNumber}</td>
+                        <td className="px-3 py-1.5 text-ink">{d.catLabel}</td>
+                        <td className="px-3 py-1.5 font-mono text-ink">{d.seatNumber}</td>
                         <td className="px-3 py-1.5 text-right font-medium text-amber-700">{d.count}×</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-ink-soft">
                 {showDuplicateModal.duplicates.length} duplicate group(s) found. This may cause issues in TipTip.
               </p>
             </div>
-            <div className="flex items-center justify-end space-x-2 p-4 border-t bg-gray-50 rounded-b-lg">
+            <div className="flex items-center justify-end space-x-2 p-4 border-t bg-page rounded-b-lg">
               <button
                 onClick={() => setShowDuplicateModal(null)}
-                className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+                className="px-4 py-2 text-sm bg-subtle text-ink rounded-lg hover:bg-subtle"
               >
                 Cancel
               </button>
@@ -3188,7 +3188,7 @@ const SeatMapEditor: React.FC = () => {
       {toast && (
         <div
           className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] max-w-xl px-4 py-2.5 rounded-lg shadow-lg text-sm text-white ${
-            toast.type === 'error' ? 'bg-red-600' : toast.type === 'info' ? 'bg-gray-800' : 'bg-green-600'
+            toast.type === 'error' ? 'bg-red-600' : toast.type === 'info' ? 'bg-ink' : 'bg-accent'
           }`}
         >
           {toast.message}

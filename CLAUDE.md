@@ -170,6 +170,21 @@ Hard rules (these key real bookings / break TipTip import if violated):
   zoom. Don't move wheel handling back to JSX.
 - App is **light-mode only** (`color-scheme: light` in globals.css) — don't
   reintroduce dark-mode styles; they made text invisible before.
+- **Design system = SatuSatu** (Confluence "Color, Typography & CTAs Guideline").
+  Tokens live in `globals.css` `@theme` and are used as Tailwind utilities — use
+  these, not raw Tailwind palette classes (`blue-600`, `gray-500`, …):
+  - `brand` (`#CB1C4F`, scale `brand-50/100/300/400/600/700`) — primary CTAs,
+    active/selected states, canvas selection highlights + resize/poly handles.
+  - `accent` (`#F87500`, `accent-50…700`) — secondary CTAs (Export), armed-tool
+    states, pen/shape draw overlays.
+  - `ink` `#333`, `ink-soft` `#6A6A6A`, `ink-mute` `#8D8A9C` — text.
+  - `page` `#F5F6FB` (app bg), `soft` `#EAEDF4`, `subtle` `#E5E6E9` — surfaces.
+  - `line` `#DADBE0`, `line-strong` `#B8B8D4` — borders.
+  - Font: **Poppins** (`next/font`, `--font-poppins`, weights 400/500/600/700).
+  - Kept off-palette on purpose: `red-*` (destructive/delete), `amber-*` (the
+    duplicate-guid warning), and the green/red/black/gray **seat status outlines**
+    + JSON **category colors** (functional data, not chrome). Snap guides are a
+    cool blue `#2563eb` to stay distinct from brand/accent.
 
 ---
 

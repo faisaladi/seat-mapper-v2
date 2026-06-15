@@ -23,9 +23,9 @@ interface InsertModalProps {
 const InsertModal: React.FC<InsertModalProps> = ({ form, setForm, onCancel, onPlace }) => (
   <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
     <div className="bg-white rounded-lg w-full max-w-sm">
-      <div className="flex items-center justify-between p-4 border-b bg-gray-50 rounded-t-lg">
+      <div className="flex items-center justify-between p-4 border-b bg-page rounded-t-lg">
         <h3 className="text-base font-semibold">Insert seats</h3>
-        <button onClick={onCancel} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded">
+        <button onClick={onCancel} className="p-1.5 text-ink-soft hover:bg-subtle rounded">
           <X className="w-5 h-5" />
         </button>
       </div>
@@ -38,27 +38,27 @@ const InsertModal: React.FC<InsertModalProps> = ({ form, setForm, onCancel, onPl
           ['radius', 'Seat radius'],
         ] as [keyof InsertForm, string][]).map(([key, label]) => (
           <div key={key}>
-            <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
+            <label className="block text-xs font-medium text-ink-soft mb-1">{label}</label>
             <input
               type="number"
               min={1}
               value={form[key]}
               onChange={(e) => setForm(prev => ({ ...prev, [key]: Math.max(1, parseInt(e.target.value, 10) || 1) }))}
-              className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg"
+              className="w-full px-2 py-1.5 text-sm border border-line rounded-lg"
             />
           </div>
         ))}
       </div>
-      <div className="flex items-center justify-end space-x-2 p-4 border-t bg-gray-50 rounded-b-lg">
+      <div className="flex items-center justify-end space-x-2 p-4 border-t bg-page rounded-b-lg">
         <button
           onClick={onCancel}
-          className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+          className="px-4 py-2 text-sm bg-subtle text-ink rounded-lg hover:bg-line"
         >
           Cancel
         </button>
         <button
           onClick={onPlace}
-          className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+          className="px-4 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent-600"
         >
           Place on canvas
         </button>
